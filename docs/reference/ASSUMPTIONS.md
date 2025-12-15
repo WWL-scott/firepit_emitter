@@ -22,3 +22,6 @@ Human:
 - absorptivity: 0.80
 - projected area standing: 0.70 m²
 - projected area seated: 0.50 m²
+
+Renderings:
+- Emitter “cutaway” view assumes a nominal wall thickness of 1/8" for visualization only (not a design commitment).

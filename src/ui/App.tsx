@@ -10,6 +10,7 @@ import { VisualView } from './components/VisualView';
 import { StackAnalysisChart } from './components/StackAnalysisChart';
 import { OutletDiameterComparison } from './components/OutletDiameterComparison';
 import { ReferenceArchive } from './components/ReferenceArchive';
+import { EmitterRenderings } from './components/EmitterRenderings';
 
 type PresetKey = 'smooth' | 'ramp' | 'statorRamp' | 'custom';
 type ViewMode = 'main' | 'visual' | 'analysis' | 'docs';
@@ -489,6 +490,10 @@ export function App() {
       {viewMode === 'visual' && (
         <div>
           <VisualView config={cfg} results={results} />
+
+          <div style={{ marginTop: 20 }}>
+            <EmitterRenderings />
+          </div>
           
           <div style={{ 
             marginTop: 20,
