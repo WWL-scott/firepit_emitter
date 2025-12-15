@@ -9,8 +9,8 @@ interface VisualViewProps {
 export function VisualView(props: VisualViewProps) {
   const { config, results } = props;
   
-  // Scale: 1 inch = 6 pixels for better utilization (increased from 4)
-  const scale = 6;
+  // Scale: 1 inch = 4 pixels (optimized for full system view)
+  const scale = 4;
   
   const inletRadiusPx = (config.inletDiameterIn / 2) * scale;
   const outletRadiusPx = (config.outletDiameterIn / 2) * scale;
@@ -18,20 +18,29 @@ export function VisualView(props: VisualViewProps) {
   const stackExtensionPx = (config.stackExtensionIn || 0) * scale;
   const totalHeightPx = heightPx + stackExtensionPx;
   
-  // Canvas dimensions - taller and better proportioned
-  const canvasWidth = 1000;
-  const canvasHeight = 700;
-  const centerX = 280; // Shift left to make room for people
-  const groundY = canvasHeight - 100;
-  const emitterTopY = groundY - totalHeightPx;
+  // Firepit housing dimensions
+  const firepitHousingDiameter = 48; // 4 feet = 48 inches
+  const firepitHousingRadiusPx = (firepitHousingDiameter / 2) * scale;
+  const firepitHousingHeightPx = 12 * scale; // 12 inches off ground
+  const burnerHeightPx = 12 * scale; // Fire at 12" above housing base
+  const emitterBaseHeightPx = firepitHousingHeightPx + burnerHeightPx; // 24" total
   
-  // Calculate distances for occupants (closer for better space utilization)
+  // Canvas dimensions - optimized to show full system
+  const canvasWidth = 1000;
+  const canvasHeight = 550; // Reduced height, no wasted space
+  const centerX = 200; // Firepit on left side
+  const groundY = canvasHeight - 50; // Less ground space
+  const firepitBaseY = groundY - firepitHousingHeightPx;
+  const emitterBaseY = groundY - emitterBaseHeightPx;
+  const emitterTopY = emitterBaseY - totalHeightPx;
+  
+  // Calculate distances for occupants
   const distance1Ft = config.distancesFromSurfaceFt[0] || 2;
   const distance2Ft = config.distancesFromSurfaceFt[2] || 4;
   
-  // Person positions (in pixels from center) - adjusted for better spacing
-  const person1X = centerX + (distance1Ft * 12 * scale * 0.7) + inletRadiusPx; // 0.7 factor brings them closer
-  const person2X = centerX + (distance2Ft * 12 * scale * 0.6) + inletRadiusPx;
+  // Person positions (in pixels from center) - measured from firepit edge
+  const person1X = centerX + firepitHousingRadiusPx + (distance1Ft * 12 * scale);
+  const person2X = centerX + firepitHousingRadiusPx + (distance2Ft * 12 * scale);
 
   return (
     <div style={{ 
@@ -52,18 +61,59 @@ export function VisualView(props: VisualViewProps) {
       <svg width={canvasWidth} height={canvasHeight} style={{ 
         border: '1px solid #e9ecef',
         borderRadius: 12,
-        background: 'linear-gradient(to bottom, #87ceeb 0%, #e0f6ff 50%, #8b7355 100%)'
+        background: 'linear-gradient(to bottom, #87ceeb 0%, #b8dce8 100%)'
       }}>
         {/* Ground */}
-        <rect x={0} y={groundY} width={canvasWidth} height={80} fill="#6b5544" />
+        <rect x={0} y={groundY} width={canvasWidth} height={50} fill="#6b5544" />
         <line x1={0} y1={groundY} x2={canvasWidth} y2={groundY} stroke="#4a3f35" strokeWidth={2} />
         
-        {/* Flame (below emitter) */}
-        <g transform={`translate(${centerX}, ${groundY - 10})`}>
-          <ellipse cx={0} cy={0} rx={20} ry={15} fill="#ff6b00" opacity={0.8} />
-          <ellipse cx={0} cy={-10} rx={15} ry={12} fill="#ff8c00" opacity={0.9} />
-          <ellipse cx={0} cy={-18} rx={10} ry={10} fill="#ffa500" />
-          <ellipse cx={0} cy={-24} rx={6} ry={8} fill="#ffff00" opacity={0.7} />
+        {/* Firepit housing (4 foot diameter round enclosure) */}
+        <defs>
+          <linearGradient id="housingGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" style={{ stopColor: '#8b7355', stopOpacity: 1 }} />
+            <stop offset="50%" style={{ stopColor: '#a0826d', stopOpacity: 1 }} />
+            <stop offset="100%" style={{ stopColor: '#6b5544', stopOpacity: 1 }} />
+          </linearGradient>
+        </defs>
+        
+        {/* Firepit housing cylinder */}
+        <ellipse 
+          cx={centerX} 
+          cy={firepitBaseY} 
+          rx={firepitHousingRadiusPx} 
+          ry={firepitHousingRadiusPx * 0.25} 
+          fill="#6b5544" 
+          stroke="#4a3f35" 
+          strokeWidth={2}
+        />
+        <rect 
+          x={centerX - firepitHousingRadiusPx} 
+          y={firepitBaseY} 
+          width={firepitHousingRadiusPx * 2} 
+          height={firepitHousingHeightPx}
+          fill="url(#housingGradient)"
+          stroke="#4a3f35"
+          strokeWidth={2}
+        />
+        <ellipse 
+          cx={centerX} 
+          cy={groundY} 
+          rx={firepitHousingRadiusPx} 
+          ry={firepitHousingRadiusPx * 0.25} 
+          fill="#8b7355" 
+          stroke="#4a3f35" 
+          strokeWidth={2}
+        />
+        
+        {/* Burner and flame (at 12" above housing, centered) */}
+        <g transform={`translate(${centerX}, ${emitterBaseY})`}>
+          {/* Burner ring */}
+          <ellipse cx={0} cy={0} rx={24} ry={8} fill="#404040" stroke="#2a2a2a" strokeWidth={1.5} />
+          {/* Flame */}
+          <ellipse cx={0} cy={-8} rx={22} ry={18} fill="#ff6b00" opacity={0.8} />
+          <ellipse cx={0} cy={-18} rx={16} ry={14} fill="#ff8c00" opacity={0.9} />
+          <ellipse cx={0} cy={-26} rx={12} ry={12} fill="#ffa500" />
+          <ellipse cx={0} cy={-34} rx={8} ry={10} fill="#ffff00" opacity={0.7} />
         </g>
 
         {/* Emitter body (tapered cone from inlet to outlet) */}
@@ -79,13 +129,13 @@ export function VisualView(props: VisualViewProps) {
           </radialGradient>
         </defs>
 
-        {/* Main emitter cone */}
+        {/* Main emitter cone (starts at 24" above ground) */}
         <path
           d={`
-            M ${centerX - inletRadiusPx} ${groundY}
-            L ${centerX - outletRadiusPx} ${groundY - heightPx}
-            L ${centerX + outletRadiusPx} ${groundY - heightPx}
-            L ${centerX + inletRadiusPx} ${groundY}
+            M ${centerX - inletRadiusPx} ${emitterBaseY}
+            L ${centerX - outletRadiusPx} ${emitterTopY}
+            L ${centerX + outletRadiusPx} ${emitterTopY}
+            L ${centerX + inletRadiusPx} ${emitterBaseY}
             Z
           `}
           fill="url(#metalGradient)"
@@ -96,7 +146,7 @@ export function VisualView(props: VisualViewProps) {
         {/* Heat glow inside emitter */}
         <ellipse 
           cx={centerX} 
-          cy={groundY - heightPx/2} 
+          cy={emitterBaseY - heightPx/2} 
           rx={inletRadiusPx * 0.6} 
           ry={heightPx * 0.4} 
           fill="url(#heatGradient)" 
@@ -128,12 +178,12 @@ export function VisualView(props: VisualViewProps) {
         )}
 
         {/* Inlet/outlet ellipses */}
-        <ellipse cx={centerX} cy={groundY} rx={inletRadiusPx} ry={inletRadiusPx * 0.3} fill="#a0a0a0" stroke="#808080" strokeWidth={2} />
+        <ellipse cx={centerX} cy={emitterBaseY} rx={inletRadiusPx} ry={inletRadiusPx * 0.3} fill="#a0a0a0" stroke="#808080" strokeWidth={2} />
         <ellipse cx={centerX} cy={emitterTopY} rx={outletRadiusPx} ry={outletRadiusPx * 0.3} fill="#c0c0c0" stroke="#808080" strokeWidth={2} />
 
         {/* Swirl indicators */}
         {[0.3, 0.5, 0.7].map((ratio, i) => {
-          const y = groundY - heightPx * ratio;
+          const y = emitterBaseY - heightPx * ratio;
           const r = inletRadiusPx - (inletRadiusPx - outletRadiusPx) * ratio;
           return (
             <g key={i}>
@@ -243,40 +293,53 @@ export function VisualView(props: VisualViewProps) {
         </g>
 
         {/* Dimension annotations */}
-        {/* Inlet diameter */}
+        {/* Firepit housing diameter */}
         <g>
-          <line x1={centerX - inletRadiusPx} y1={groundY + 25} x2={centerX + inletRadiusPx} y2={groundY + 25} stroke="#667eea" strokeWidth={1.5} />
-          <line x1={centerX - inletRadiusPx} y1={groundY + 20} x2={centerX - inletRadiusPx} y2={groundY + 30} stroke="#667eea" strokeWidth={1.5} />
-          <line x1={centerX + inletRadiusPx} y1={groundY + 20} x2={centerX + inletRadiusPx} y2={groundY + 30} stroke="#667eea" strokeWidth={1.5} />
-          <text x={centerX} y={groundY + 42} fontSize={13} fill="#667eea" textAnchor="middle" fontWeight={700}>
-            Inlet: {config.inletDiameterIn}" diameter
+          <line x1={centerX - firepitHousingRadiusPx} y1={groundY + 15} x2={centerX + firepitHousingRadiusPx} y2={groundY + 15} stroke="#8b7355" strokeWidth={1.5} />
+          <line x1={centerX - firepitHousingRadiusPx} y1={groundY + 10} x2={centerX - firepitHousingRadiusPx} y2={groundY + 20} stroke="#8b7355" strokeWidth={1.5} />
+          <line x1={centerX + firepitHousingRadiusPx} y1={groundY + 10} x2={centerX + firepitHousingRadiusPx} y2={groundY + 20} stroke="#8b7355" strokeWidth={1.5} />
+          <text x={centerX} y={groundY + 30} fontSize={11} fill="#6b5544" textAnchor="middle" fontWeight={600}>
+            Housing: 48" (4 ft)
+          </text>
+        </g>
+
+        {/* Emitter inlet diameter */}
+        <g>
+          <line x1={centerX - inletRadiusPx} y1={emitterBaseY - 8} x2={centerX + inletRadiusPx} y2={emitterBaseY - 8} stroke="#667eea" strokeWidth={1.5} />
+          <text x={centerX} y={emitterBaseY - 12} fontSize={11} fill="#667eea" textAnchor="middle" fontWeight={600}>
+            Inlet: {config.inletDiameterIn}"
           </text>
         </g>
 
         {/* Outlet diameter */}
         <g>
           <line x1={centerX - outletRadiusPx - 35} y1={emitterTopY} x2={centerX - outletRadiusPx - 15} y2={emitterTopY} stroke="#667eea" strokeWidth={1.5} />
-          <text x={centerX - outletRadiusPx - 45} y={emitterTopY + 5} fontSize={13} fill="#667eea" textAnchor="end" fontWeight={700}>
-            Outlet: {config.outletDiameterIn}" diameter
+          <text x={centerX - outletRadiusPx - 45} y={emitterTopY + 5} fontSize={11} fill="#667eea" textAnchor="end" fontWeight={600}>
+            Outlet: {config.outletDiameterIn}"
           </text>
         </g>
 
-        {/* Height */}
+        {/* Height measurements on left side */}
         <g>
-          <line x1={centerX - inletRadiusPx - 25} y1={groundY} x2={centerX - inletRadiusPx - 25} y2={groundY - heightPx} stroke="#667eea" strokeWidth={1.5} />
-          <line x1={centerX - inletRadiusPx - 30} y1={groundY} x2={centerX - inletRadiusPx - 20} y2={groundY} stroke="#667eea" strokeWidth={1.5} />
-          <line x1={centerX - inletRadiusPx - 30} y1={groundY - heightPx} x2={centerX - inletRadiusPx - 20} y2={groundY - heightPx} stroke="#667eea" strokeWidth={1.5} />
-          <text x={centerX - inletRadiusPx - 35} y={groundY - heightPx/2 + 5} fontSize={13} fill="#667eea" textAnchor="end" fontWeight={700}>
-            Height: {config.emitterHeightIn}"
-          </text>
+          {/* Ground to housing base: 12" */}
+          <line x1={30} y1={groundY} x2={30} y2={firepitBaseY} stroke="#999" strokeWidth={1} strokeDasharray="2,2" />
+          <text x={35} y={(groundY + firepitBaseY)/2 + 4} fontSize={10} fill="#6c757d">12"</text>
+          
+          {/* Housing base to fire: 12" */}
+          <line x1={30} y1={firepitBaseY} x2={30} y2={emitterBaseY} stroke="#ff6b00" strokeWidth={1.5} />
+          <text x={35} y={(firepitBaseY + emitterBaseY)/2 + 4} fontSize={10} fill="#ff6b00" fontWeight={600}>12"</text>
+          
+          {/* Emitter height */}
+          <line x1={30} y1={emitterBaseY} x2={30} y2={emitterTopY} stroke="#667eea" strokeWidth={1.5} />
+          <text x={35} y={(emitterBaseY + emitterTopY)/2 + 4} fontSize={10} fill="#667eea" fontWeight={600}>{config.emitterHeightIn}"</text>
         </g>
 
         {/* Power labels */}
-        <g transform={`translate(30, 40)`}>
-          <text x={0} y={0} fontSize={14} fill="#212529" fontWeight={700}>System Power:</text>
-          <text x={0} y={22} fontSize={13} fill="#495057">Burner: {(results.burnerPowerW / 1000).toFixed(2)} kW</text>
-          <text x={0} y={40} fontSize={13} fill="#495057">Wall captured: {(results.wallCapturedW / 1000).toFixed(2)} kW</text>
-          <text x={0} y={58} fontSize={13} fill="#ff6b00" fontWeight={700}>IR out: {(results.radiantOutW / 1000).toFixed(2)} kW</text>
+        <g transform={`translate(${canvasWidth - 180}, 30)`}>
+          <text x={0} y={0} fontSize={13} fill="#212529" fontWeight={700}>System Power:</text>
+          <text x={0} y={20} fontSize={11} fill="#495057">Burner: {(results.burnerPowerW / 1000).toFixed(2)} kW</text>
+          <text x={0} y={36} fontSize={11} fill="#495057">Wall: {(results.wallCapturedW / 1000).toFixed(2)} kW</text>
+          <text x={0} y={52} fontSize={11} fill="#ff6b00" fontWeight={700}>IR out: {(results.radiantOutW / 1000).toFixed(2)} kW</text>
         </g>
       </svg>
 
@@ -288,8 +351,9 @@ export function VisualView(props: VisualViewProps) {
         fontSize: 12,
         color: '#6c757d'
       }}>
-        <strong>💡 Visual Key:</strong> Orange waves = IR radiation | Blue swirls = gas flow | 
-        Dashed arrows = radiant heat delivery | Ground level = burner base
+        <strong>💡 System Layout:</strong> 4-ft firepit housing (brown) at ground level → Burner and fire at 12" → 
+        Emitter inlet at 24" (12" above fire) → Tapered emitter captures rising heat → 
+        IR radiation delivered to occupants
       </div>
     </div>
   );
