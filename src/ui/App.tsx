@@ -9,6 +9,7 @@ import { Tooltip } from './components/Tooltip';
 import { VisualView } from './components/VisualView';
 import { StackAnalysisChart } from './components/StackAnalysisChart';
 import { OutletDiameterComparison } from './components/OutletDiameterComparison';
+import { ReferenceArchive } from './components/ReferenceArchive';
 
 type PresetKey = 'smooth' | 'ramp' | 'statorRamp' | 'custom';
 type ViewMode = 'main' | 'visual' | 'analysis' | 'docs';
@@ -609,6 +610,8 @@ export function App() {
               </div>
             </div>
           </div>
+
+          <ReferenceArchive />
         </div>
       )}
 

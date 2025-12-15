@@ -8,50 +8,168 @@ interface VisualViewProps {
 
 export function VisualView(props: VisualViewProps) {
   const { config, results } = props;
-  
-  // Scale everything based on 6-foot (72 inch) tall standing person
-  // Person height = 72", canvas needs person + 12" (1 ft) headroom
-  const personHeightIn = 72; // 6 feet
-  const headroomIn = 12; // 1 foot above person
+
+  // --- Scene scaling ---
+  // Target: 6-ft (72") standing person with 1-ft (12") headroom.
+  // Choose a deterministic scale so that:
+  //   top of drawing (y=0) .. headroom .. person .. ground
+  const canvasWidth = 1000;
   const canvasHeight = 600;
-  const groundPaddingPx = 40; // Small ground area
-  const availableHeightPx = canvasHeight - groundPaddingPx - headroomIn;
-  
-  // Calculate scale: pixels per inch based on person height
-  const scale = (canvasHeight - groundPaddingPx - (headroomIn * 72 / personHeightIn)) / personHeightIn;
-  
+  const groundPaddingPx = 40;
+  const personHeightIn = 72;
+  const headroomIn = 12;
+  const groundY = canvasHeight - groundPaddingPx;
+  const scale = (groundY - 0) / (personHeightIn + headroomIn); // px per inch
+  const marginX = 40;
+
+  // --- Firepit + emitter geometry ---
+  // User spec:
+  // - Firepit housing: 4 ft round (48")
+  // - Fire (burner/flame): ~12" off ground (at housing top)
+  // - Emitter inlet: 12" above fire => 24" off ground
+  const firepitDiameterIn = 48;
+  const firepitRadiusPx = (firepitDiameterIn / 2) * scale;
+  const firepitHeightIn = 12;
+  const firepitHeightPx = firepitHeightIn * scale;
+  const fireY = groundY - (12 * scale);
+  const emitterInletY = groundY - (24 * scale);
+
+  const emitterHeightPx = config.emitterHeightIn * scale;
+  const stackExtensionPx = (config.stackExtensionIn || 0) * scale;
   const inletRadiusPx = (config.inletDiameterIn / 2) * scale;
   const outletRadiusPx = (config.outletDiameterIn / 2) * scale;
-  const heightPx = config.emitterHeightIn * scale;
-  const stackExtensionPx = (config.stackExtensionIn || 0) * scale;
-  const totalEmitterHeightPx = heightPx + stackExtensionPx;
-  
-  // Firepit housing dimensions
-  const firepitHousingDiameter = 48; // 4 feet = 48 inches
-  const firepitHousingRadiusPx = (firepitHousingDiameter / 2) * scale;
-  const firepitHousingHeightPx = 12 * scale; // 12 inches off ground
-  const burnerHeightPx = 12 * scale; // Fire at 12" above housing base
-  const emitterBaseHeightPx = firepitHousingHeightPx + burnerHeightPx; // 24" total
-  
-  // Person dimensions
-  const personHeightPx = personHeightIn * scale;
-  const seatedHeightIn = 43; // Seated person ~43" tall
-  const seatedHeightPx = seatedHeightIn * scale;
-  
-  // Canvas dimensions - centered firepit
-  const canvasWidth = 1000;
-  const centerX = canvasWidth / 2; // Center the firepit
-  const groundY = canvasHeight - groundPaddingPx;
-  const emitterBaseY = groundY - emitterBaseHeightPx;
-  const emitterTopY = emitterBaseY - totalEmitterHeightPx;
-  
-  // Calculate distances for occupants
-  const distance1Ft = config.distancesFromSurfaceFt[0] || 2;
-  const distance2Ft = config.distancesFromSurfaceFt[2] || 4;
-  
-  // Person positions - one on each side
-  const person1X = centerX - firepitHousingRadiusPx - (distance1Ft * 12 * scale); // Left side (standing)
-  const person2X = centerX + firepitHousingRadiusPx + (distance2Ft * 12 * scale); // Right side (seated)
+  const emitterConeTopY = emitterInletY - emitterHeightPx;
+  const emitterTopY = emitterConeTopY - stackExtensionPx;
+
+  // Occupant distances (from surface) in feet
+  const distanceStandingFt = config.distancesFromSurfaceFt[0] || 2;
+  const distanceSeatedFt = config.distancesFromSurfaceFt[2] || 4;
+
+  const centerX = canvasWidth / 2;
+
+  // Simple person sizing in inches (not fractions of height) so it stays realistic.
+  const standingShoulderWidthPx = 18 * scale;
+  const standingHalfWidthPx = Math.max(standingShoulderWidthPx, 24 * scale) / 2;
+  const seatedHalfWidthPx = Math.max(16 * scale, 22 * scale) / 2;
+
+  // Place one person on each side. Clamp so they stay visible.
+  const desiredStandingX = centerX - firepitRadiusPx - (distanceStandingFt * 12 * scale) - standingHalfWidthPx;
+  const desiredSeatedX = centerX + firepitRadiusPx + (distanceSeatedFt * 12 * scale) + seatedHalfWidthPx;
+  const personStandingX = Math.max(marginX + standingHalfWidthPx, desiredStandingX);
+  const personSeatedX = Math.min(canvasWidth - marginX - seatedHalfWidthPx, desiredSeatedX);
+
+  function renderStandingPerson(x: number, yGround: number) {
+    // Inches
+    const headD = 9;
+    const headR = (headD / 2) * scale;
+    const neckH = 2 * scale;
+    const torsoH = 26 * scale;
+    const legH = 34 * scale;
+    const torsoW = 16 * scale;
+    const shoulderW = 18 * scale;
+    const armL = 22 * scale;
+
+    const yHeadCenter = yGround - (legH + torsoH + neckH + headR);
+    const yShoulders = yGround - (legH + torsoH) + (2 * scale);
+    const yTorsoCenter = yGround - (legH + torsoH / 2);
+    const yHip = yGround - legH;
+
+    return (
+      <g transform={`translate(${x}, ${yGround})`}>
+        {/* Legs */}
+        <line x1={-4 * scale} y1={0} x2={-6 * scale} y2={-legH} stroke="#2c5aa0" strokeWidth={4 * scale} strokeLinecap="round" />
+        <line x1={4 * scale} y1={0} x2={6 * scale} y2={-legH} stroke="#2c5aa0" strokeWidth={4 * scale} strokeLinecap="round" />
+
+        {/* Torso */}
+        <rect x={-torsoW / 2} y={-legH - torsoH} width={torsoW} height={torsoH} rx={6 * scale} fill="#4a90e2" stroke="#2c5aa0" strokeWidth={2} />
+
+        {/* Arms */}
+        <line x1={-shoulderW / 2} y1={-legH - torsoH + (4 * scale)} x2={-shoulderW / 2 - armL} y2={-legH - torsoH / 2} stroke="#4a90e2" strokeWidth={4 * scale} strokeLinecap="round" />
+        <line x1={shoulderW / 2} y1={-legH - torsoH + (4 * scale)} x2={shoulderW / 2 + armL} y2={-legH - torsoH / 2} stroke="#4a90e2" strokeWidth={4 * scale} strokeLinecap="round" />
+
+        {/* Head */}
+        <circle cx={0} cy={-(legH + torsoH + neckH + headR)} r={headR} fill="#ffdbac" stroke="#2c5aa0" strokeWidth={2} />
+
+        {/* Labels */}
+        <text x={0} y={groundPaddingPx - 10} fontSize={11} fill="#212529" textAnchor="middle" fontWeight={600}>
+          Standing (6 ft)
+        </text>
+        <text x={0} y={groundPaddingPx + 4} fontSize={10} fill="#6c757d" textAnchor="middle">
+          {distanceStandingFt.toFixed(1)} ft away
+        </text>
+        <text x={0} y={groundPaddingPx + 18} fontSize={10} fill="#667eea" textAnchor="middle" fontWeight={700}>
+          {results.absorbedStandingW[0]?.toFixed(0) || 0} W
+        </text>
+
+        {/* (invisible) anchor points for IR arrows */}
+        <circle cx={0} cy={yTorsoCenter - yGround} r={0} opacity={0} />
+        <circle cx={0} cy={yHeadCenter - yGround} r={0} opacity={0} />
+        <circle cx={0} cy={yShoulders - yGround} r={0} opacity={0} />
+        <circle cx={0} cy={yHip - yGround} r={0} opacity={0} />
+      </g>
+    );
+  }
+
+  function renderSeatedPerson(x: number, yGround: number) {
+    // Inches
+    const headD = 9;
+    const headR = (headD / 2) * scale;
+    const torsoH = 20 * scale;
+    const torsoW = 16 * scale;
+    const thighL = 16 * scale;
+    const shinL = 14 * scale;
+    const hipY = yGround - (12 * scale);
+    const shoulderY = hipY - torsoH + (3 * scale);
+
+    return (
+      <g transform={`translate(${x}, ${yGround})`}>
+        {/* Legs (bent downward; feet on ground) */}
+        <path
+          d={`M ${-3 * scale} ${-(12 * scale)} L ${-10 * scale} ${-(6 * scale)} L ${-10 * scale} 0`}
+          stroke="#a02c2c"
+          strokeWidth={4 * scale}
+          fill="none"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <path
+          d={`M ${3 * scale} ${-(12 * scale)} L ${10 * scale} ${-(6 * scale)} L ${10 * scale} 0`}
+          stroke="#a02c2c"
+          strokeWidth={4 * scale}
+          fill="none"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <line x1={-14 * scale} y1={0} x2={-6 * scale} y2={0} stroke="#a02c2c" strokeWidth={4 * scale} strokeLinecap="round" />
+        <line x1={6 * scale} y1={0} x2={14 * scale} y2={0} stroke="#a02c2c" strokeWidth={4 * scale} strokeLinecap="round" />
+
+        {/* Torso */}
+        <rect x={-torsoW / 2} y={-(12 * scale) - torsoH} width={torsoW} height={torsoH} rx={6 * scale} fill="#e24a4a" stroke="#a02c2c" strokeWidth={2} />
+
+        {/* Arms */}
+        <line x1={-torsoW / 2} y1={-(12 * scale) - torsoH + (5 * scale)} x2={-(torsoW / 2) - (14 * scale)} y2={-(12 * scale) - torsoH / 2} stroke="#e24a4a" strokeWidth={4 * scale} strokeLinecap="round" />
+        <line x1={torsoW / 2} y1={-(12 * scale) - torsoH + (5 * scale)} x2={(torsoW / 2) + (14 * scale)} y2={-(12 * scale) - torsoH / 2} stroke="#e24a4a" strokeWidth={4 * scale} strokeLinecap="round" />
+
+        {/* Head */}
+        <circle cx={0} cy={-(12 * scale) - torsoH - (2 * scale) - headR} r={headR} fill="#ffdbac" stroke="#a02c2c" strokeWidth={2} />
+
+        {/* Labels */}
+        <text x={0} y={groundPaddingPx - 10} fontSize={11} fill="#212529" textAnchor="middle" fontWeight={600}>
+          Seated
+        </text>
+        <text x={0} y={groundPaddingPx + 4} fontSize={10} fill="#6c757d" textAnchor="middle">
+          {distanceSeatedFt.toFixed(1)} ft away
+        </text>
+        <text x={0} y={groundPaddingPx + 18} fontSize={10} fill="#667eea" textAnchor="middle" fontWeight={700}>
+          {results.absorbedSeatedW[2]?.toFixed(0) || 0} W
+        </text>
+
+        {/* (invisible) anchor */}
+        <circle cx={0} cy={(shoulderY - yGround)} r={0} opacity={0} />
+        <circle cx={0} cy={(hipY - yGround)} r={0} opacity={0} />
+      </g>
+    );
+  }
 
   return (
     <div style={{ 
@@ -67,8 +185,7 @@ export function VisualView(props: VisualViewProps) {
         fontSize: 18,
         fontWeight: 600,
         color: '#212529'
-      }}>🔥 Visual Representation (6-ft person scale, 1" = {scale.toFixed(1)}px)</h3>
-
+      }}>🔥 Visual Representation (6-ft scale, 1" = {scale.toFixed(1)}px)</h3>
       <svg width={canvasWidth} height={canvasHeight} style={{ 
         border: '1px solid #e9ecef',
         borderRadius: 12,
@@ -98,44 +215,50 @@ export function VisualView(props: VisualViewProps) {
         <rect x={0} y={groundY} width={canvasWidth} height={groundPaddingPx} fill="#8b7355" />
         <line x1={0} y1={groundY} x2={canvasWidth} y2={groundY} stroke="#4a3f35" strokeWidth={2} />
         
-        {/* Firepit housing (4 foot diameter, perfectly vertical cylinder) */}
-        <rect 
-          x={centerX - firepitHousingRadiusPx} 
-          y={groundY - firepitHousingHeightPx} 
-          width={firepitHousingRadiusPx * 2} 
-          height={firepitHousingHeightPx}
+        {/* Firepit housing (4-ft diameter cylinder) */}
+        <ellipse
+          cx={centerX}
+          cy={groundY}
+          rx={firepitRadiusPx}
+          ry={firepitRadiusPx * 0.18}
+          fill="#6b5544"
+          opacity={0.55}
+        />
+        <rect
+          x={centerX - firepitRadiusPx}
+          y={groundY - firepitHeightPx}
+          width={firepitRadiusPx * 2}
+          height={firepitHeightPx}
           fill="url(#housingGradient)"
           stroke="#4a3f35"
           strokeWidth={2}
         />
-        <ellipse 
-          cx={centerX} 
-          cy={groundY - firepitHousingHeightPx} 
-          rx={firepitHousingRadiusPx} 
-          ry={firepitHousingRadiusPx * 0.2} 
-          fill="#a0826d" 
-          stroke="#4a3f35" 
+        <ellipse
+          cx={centerX}
+          cy={groundY - firepitHeightPx}
+          rx={firepitRadiusPx}
+          ry={firepitRadiusPx * 0.18}
+          fill="#a0826d"
+          stroke="#4a3f35"
           strokeWidth={2}
         />
         
-        {/* Burner and flame (at 12" above housing base, centered) */}
-        <g transform={`translate(${centerX}, ${emitterBaseY})`}>
-          {/* Burner ring */}
-          <ellipse cx={0} cy={0} rx={20} ry={6} fill="#404040" stroke="#2a2a2a" strokeWidth={1.5} />
-          {/* Flame */}
-          <ellipse cx={0} cy={-6} rx={18} ry={14} fill="#ff6b00" opacity={0.8} />
-          <ellipse cx={0} cy={-14} rx={14} ry={12} fill="#ff8c00" opacity={0.9} />
-          <ellipse cx={0} cy={-22} rx={10} ry={10} fill="#ffa500" />
-          <ellipse cx={0} cy={-28} rx={6} ry={8} fill="#ffff00" opacity={0.7} />
+        {/* Burner + fire (12" above ground) */}
+        <g transform={`translate(${centerX}, ${fireY})`}>
+          <ellipse cx={0} cy={0} rx={18 * scale} ry={5 * scale} fill="#404040" stroke="#2a2a2a" strokeWidth={1.5} />
+          <ellipse cx={0} cy={-(5 * scale)} rx={14 * scale} ry={11 * scale} fill="#ff6b00" opacity={0.85} />
+          <ellipse cx={0} cy={-(12 * scale)} rx={10 * scale} ry={9 * scale} fill="#ff8c00" opacity={0.9} />
+          <ellipse cx={0} cy={-(18 * scale)} rx={7 * scale} ry={7 * scale} fill="#ffa500" />
+          <ellipse cx={0} cy={-(22 * scale)} rx={4 * scale} ry={6 * scale} fill="#ffff00" opacity={0.7} />
         </g>
 
-        {/* Main emitter cone (starts at 24" above ground) */}
+        {/* Main emitter cone (inlet at 24" above ground) */}
         <path
           d={`
-            M ${centerX - inletRadiusPx} ${emitterBaseY}
-            L ${centerX - outletRadiusPx} ${emitterTopY}
-            L ${centerX + outletRadiusPx} ${emitterTopY}
-            L ${centerX + inletRadiusPx} ${emitterBaseY}
+            M ${centerX - inletRadiusPx} ${emitterInletY}
+            L ${centerX - outletRadiusPx} ${emitterConeTopY}
+            L ${centerX + outletRadiusPx} ${emitterConeTopY}
+            L ${centerX + inletRadiusPx} ${emitterInletY}
             Z
           `}
           fill="url(#metalGradient)"
@@ -146,9 +269,9 @@ export function VisualView(props: VisualViewProps) {
         {/* Heat glow inside emitter */}
         <ellipse 
           cx={centerX} 
-          cy={emitterBaseY - heightPx/2} 
+          cy={emitterInletY - emitterHeightPx/2} 
           rx={inletRadiusPx * 0.6} 
-          ry={heightPx * 0.4} 
+          ry={emitterHeightPx * 0.4} 
           fill="url(#heatGradient)" 
         />
 
@@ -164,10 +287,20 @@ export function VisualView(props: VisualViewProps) {
               stroke="#808080"
               strokeWidth={2}
             />
+            {/* Stack top ellipse (true outlet when stack exists) */}
+            <ellipse
+              cx={centerX}
+              cy={emitterTopY}
+              rx={outletRadiusPx}
+              ry={outletRadiusPx * 0.22}
+              fill="#c0c0c0"
+              stroke="#808080"
+              strokeWidth={2}
+            />
             {/* Extension label */}
             <text
               x={centerX + outletRadiusPx + 10}
-              y={emitterTopY + stackExtensionPx/2}
+              y={emitterTopY + stackExtensionPx / 2}
               fontSize={11}
               fill="#667eea"
               fontWeight={600}
@@ -177,13 +310,16 @@ export function VisualView(props: VisualViewProps) {
           </>
         )}
 
-        {/* Inlet/outlet ellipses */}
-        <ellipse cx={centerX} cy={emitterBaseY} rx={inletRadiusPx} ry={inletRadiusPx * 0.3} fill="#a0a0a0" stroke="#808080" strokeWidth={2} />
-        <ellipse cx={centerX} cy={emitterTopY} rx={outletRadiusPx} ry={outletRadiusPx * 0.3} fill="#c0c0c0" stroke="#808080" strokeWidth={2} />
+        {/* Inlet / cone-top seam / outlet ellipses */}
+        <ellipse cx={centerX} cy={emitterInletY} rx={inletRadiusPx} ry={inletRadiusPx * 0.22} fill="#a0a0a0" stroke="#808080" strokeWidth={2} />
+        <ellipse cx={centerX} cy={emitterConeTopY} rx={outletRadiusPx} ry={outletRadiusPx * 0.22} fill="#bdbdbd" stroke="#808080" strokeWidth={2} />
+        {stackExtensionPx === 0 && (
+          <ellipse cx={centerX} cy={emitterConeTopY} rx={outletRadiusPx} ry={outletRadiusPx * 0.22} fill="#c0c0c0" stroke="#808080" strokeWidth={2} />
+        )}
 
         {/* Swirl indicators */}
         {[0.3, 0.5, 0.7].map((ratio, i) => {
-          const y = emitterBaseY - heightPx * ratio;
+          const y = emitterInletY - emitterHeightPx * ratio;
           const r = inletRadiusPx - (inletRadiusPx - outletRadiusPx) * ratio;
           return (
             <g key={i}>
@@ -201,11 +337,11 @@ export function VisualView(props: VisualViewProps) {
 
         {/* Rising hot gas/IR radiation waves */}
         {[0, 1, 2, 3].map((i) => {
-          const y = emitterTopY - 15 - (i * 12);
+          const y = emitterTopY - (10 * scale) - (i * 10 * scale);
           return (
             <path
               key={i}
-              d={`M ${centerX - 25} ${y} Q ${centerX - 12} ${y - 6}, ${centerX} ${y} Q ${centerX + 12} ${y - 6}, ${centerX + 25} ${y}`}
+              d={`M ${centerX - (22 * scale)} ${y} Q ${centerX - (10 * scale)} ${y - (5 * scale)}, ${centerX} ${y} Q ${centerX + (10 * scale)} ${y - (5 * scale)}, ${centerX + (22 * scale)} ${y}`}
               fill="none"
               stroke="#ff6b00"
               strokeWidth={2}
@@ -215,11 +351,16 @@ export function VisualView(props: VisualViewProps) {
         })}
 
         {/* IR radiation lines to people (both sides) */}
+        {(() => {
+          const outletY = stackExtensionPx > 0 ? emitterTopY : emitterConeTopY;
+          const outletEmitY = outletY + (6 * scale);
+          return (
+            <>
         <line 
           x1={centerX - outletRadiusPx} 
-          y1={emitterTopY + heightPx/2} 
-          x2={person1X + 15} 
-          y2={groundY - personHeightPx/2} 
+          y1={outletEmitY} 
+          x2={personStandingX + standingHalfWidthPx} 
+          y2={groundY - (36 * scale)} 
           stroke="#ff6b00" 
           strokeWidth={2}
           strokeDasharray="5,5"
@@ -228,95 +369,53 @@ export function VisualView(props: VisualViewProps) {
         />
         <line 
           x1={centerX + outletRadiusPx} 
-          y1={emitterTopY + heightPx/2} 
-          x2={person2X - 15} 
-          y2={groundY - seatedHeightPx/2} 
+          y1={outletEmitY} 
+          x2={personSeatedX - seatedHalfWidthPx} 
+          y2={groundY - (24 * scale)} 
           stroke="#ff6b00" 
           strokeWidth={2}
           strokeDasharray="5,5"
           opacity={0.6}
           markerEnd="url(#arrowhead)"
         />
+            </>
+          );
+        })()}
 
-        {/* Standing person (LEFT side, 6 feet tall) */}
-        <g transform={`translate(${person1X}, ${groundY})`}>
-          {/* Legs */}
-          <line x1={-5} y1={0} x2={-8} y2={personHeightPx * 0.45} stroke="#2c5aa0" strokeWidth={personHeightPx * 0.06} strokeLinecap="round" />
-          <line x1={5} y1={0} x2={8} y2={personHeightPx * 0.45} stroke="#2c5aa0" strokeWidth={personHeightPx * 0.06} strokeLinecap="round" />
-          {/* Body */}
-          <ellipse cx={0} cy={-personHeightPx * 0.37} rx={personHeightPx * 0.12} ry={personHeightPx * 0.28} fill="#4a90e2" stroke="#2c5aa0" strokeWidth={2} />
-          {/* Arms */}
-          <line x1={-personHeightPx * 0.12} y1={-personHeightPx * 0.35} x2={-personHeightPx * 0.20} y2={-personHeightPx * 0.25} stroke="#4a90e2" strokeWidth={personHeightPx * 0.06} strokeLinecap="round" />
-          <line x1={personHeightPx * 0.12} y1={-personHeightPx * 0.35} x2={personHeightPx * 0.20} y2={-personHeightPx * 0.25} stroke="#4a90e2" strokeWidth={personHeightPx * 0.06} strokeLinecap="round" />
-          {/* Head */}
-          <circle cx={0} cy={-personHeightPx * 0.86} r={personHeightPx * 0.10} fill="#ffdbac" stroke="#2c5aa0" strokeWidth={2} />
-          {/* Label */}
-          <text x={0} y={groundPaddingPx - 8} fontSize={11} fill="#212529" textAnchor="middle" fontWeight={600}>
-            Standing (6 ft)
-          </text>
-          <text x={0} y={groundPaddingPx + 5} fontSize={10} fill="#6c757d" textAnchor="middle">
-            {distance1Ft.toFixed(1)} ft away
-          </text>
-          <text x={0} y={groundPaddingPx + 18} fontSize={10} fill="#667eea" textAnchor="middle" fontWeight={700}>
-            {results.absorbedStandingW[0]?.toFixed(0) || 0} W
-          </text>
-        </g>
-
-        {/* Seated person (RIGHT side, ~43" tall) */}
-        <g transform={`translate(${person2X}, ${groundY})`}>
-          {/* Legs (bent, seated) */}
-          <path d={`M ${-seatedHeightPx * 0.12} 0 L ${-seatedHeightPx * 0.18} ${seatedHeightPx * 0.15} L ${-seatedHeightPx * 0.32} ${seatedHeightPx * 0.15}`} stroke="#a02c2c" strokeWidth={seatedHeightPx * 0.09} fill="none" strokeLinecap="round" />
-          <path d={`M ${seatedHeightPx * 0.12} 0 L ${seatedHeightPx * 0.18} ${seatedHeightPx * 0.15} L ${seatedHeightPx * 0.32} ${seatedHeightPx * 0.15}`} stroke="#a02c2c" strokeWidth={seatedHeightPx * 0.09} fill="none" strokeLinecap="round" />
-          {/* Body (shorter) */}
-          <ellipse cx={0} cy={-seatedHeightPx * 0.35} rx={seatedHeightPx * 0.15} ry={seatedHeightPx * 0.28} fill="#e24a4a" stroke="#a02c2c" strokeWidth={2} />
-          {/* Arms */}
-          <line x1={-seatedHeightPx * 0.15} y1={-seatedHeightPx * 0.32} x2={-seatedHeightPx * 0.28} y2={-seatedHeightPx * 0.20} stroke="#e24a4a" strokeWidth={seatedHeightPx * 0.08} strokeLinecap="round" />
-          <line x1={seatedHeightPx * 0.15} y1={-seatedHeightPx * 0.32} x2={seatedHeightPx * 0.28} y2={-seatedHeightPx * 0.20} stroke="#e24a4a" strokeWidth={seatedHeightPx * 0.08} strokeLinecap="round" />
-          {/* Head */}
-          <circle cx={0} cy={-seatedHeightPx * 0.84} r={seatedHeightPx * 0.12} fill="#ffdbac" stroke="#a02c2c" strokeWidth={2} />
-          {/* Label */}
-          <text x={0} y={groundPaddingPx - 8} fontSize={11} fill="#212529" textAnchor="middle" fontWeight={600}>
-            Seated
-          </text>
-          <text x={0} y={groundPaddingPx + 5} fontSize={10} fill="#6c757d" textAnchor="middle">
-            {distance2Ft.toFixed(1)} ft away
-          </text>
-          <text x={0} y={groundPaddingPx + 18} fontSize={10} fill="#667eea" textAnchor="middle" fontWeight={700}>
-            {results.absorbedSeatedW[2]?.toFixed(0) || 0} W
-          </text>
-        </g>
+        {renderStandingPerson(personStandingX, groundY)}
+        {renderSeatedPerson(personSeatedX, groundY)}
 
         {/* Dimension annotations */}
-        {/* Firepit housing width */}
+        {/* Quick labels */}
         <g>
           <text x={centerX} y={groundY + 22} fontSize={10} fill="#6b5544" textAnchor="middle" fontWeight={600}>
             4-ft Housing
           </text>
-        </g>
-
-        {/* Emitter dimensions */}
-        <g>
-          <text x={centerX + outletRadiusPx + 10} y={emitterTopY + 8} fontSize={9} fill="#667eea" textAnchor="start" fontWeight={600}>
+          <text
+            x={centerX + outletRadiusPx + 10}
+            y={(stackExtensionPx > 0 ? emitterTopY : emitterConeTopY) + 6}
+            fontSize={9}
+            fill="#667eea"
+            textAnchor="start"
+            fontWeight={600}
+          >
             Outlet: {config.outletDiameterIn}"
           </text>
-          <text x={centerX + inletRadiusPx + 10} y={emitterBaseY + 8} fontSize={9} fill="#667eea" textAnchor="start" fontWeight={600}>
+          <text x={centerX + inletRadiusPx + 10} y={emitterInletY + 6} fontSize={9} fill="#667eea" textAnchor="start" fontWeight={600}>
             Inlet: {config.inletDiameterIn}"
           </text>
         </g>
 
-        {/* Height measurements on left side */}
+        {/* Height markers */}
         <g>
-          {/* Housing height: 12" */}
-          <line x1={centerX - firepitHousingRadiusPx - 15} y1={groundY} x2={centerX - firepitHousingRadiusPx - 15} y2={groundY - firepitHousingHeightPx} stroke="#8b7355" strokeWidth={1.5} />
-          <text x={centerX - firepitHousingRadiusPx - 20} y={(groundY + (groundY - firepitHousingHeightPx))/2 + 4} fontSize={9} fill="#6b5544" textAnchor="end" fontWeight={600}>12"</text>
-          
-          {/* Fire to emitter base: 12" */}
-          <line x1={centerX - firepitHousingRadiusPx - 15} y1={groundY - firepitHousingHeightPx} x2={centerX - firepitHousingRadiusPx - 15} y2={emitterBaseY} stroke="#ff6b00" strokeWidth={1.5} />
-          <text x={centerX - firepitHousingRadiusPx - 20} y={((groundY - firepitHousingHeightPx) + emitterBaseY)/2 + 4} fontSize={9} fill="#ff6b00" textAnchor="end" fontWeight={600}>12"</text>
-          
-          {/* Emitter height */}
-          <line x1={centerX - firepitHousingRadiusPx - 15} y1={emitterBaseY} x2={centerX - firepitHousingRadiusPx - 15} y2={emitterTopY} stroke="#667eea" strokeWidth={1.5} />
-          <text x={centerX - firepitHousingRadiusPx - 20} y={(emitterBaseY + emitterTopY)/2 + 4} fontSize={9} fill="#667eea" textAnchor="end" fontWeight={600}>{config.emitterHeightIn}"</text>
+          <line x1={centerX - firepitRadiusPx - 18} y1={groundY} x2={centerX - firepitRadiusPx - 18} y2={fireY} stroke="#ff6b00" strokeWidth={1.5} />
+          <text x={centerX - firepitRadiusPx - 22} y={(groundY + fireY) / 2 + 4} fontSize={9} fill="#ff6b00" textAnchor="end" fontWeight={600}>12"</text>
+
+          <line x1={centerX - firepitRadiusPx - 18} y1={fireY} x2={centerX - firepitRadiusPx - 18} y2={emitterInletY} stroke="#667eea" strokeWidth={1.5} />
+          <text x={centerX - firepitRadiusPx - 22} y={(fireY + emitterInletY) / 2 + 4} fontSize={9} fill="#667eea" textAnchor="end" fontWeight={600}>12"</text>
+
+          <line x1={centerX - firepitRadiusPx - 18} y1={emitterInletY} x2={centerX - firepitRadiusPx - 18} y2={emitterConeTopY} stroke="#667eea" strokeWidth={1.5} />
+          <text x={centerX - firepitRadiusPx - 22} y={(emitterInletY + emitterConeTopY) / 2 + 4} fontSize={9} fill="#667eea" textAnchor="end" fontWeight={600}>{config.emitterHeightIn}"</text>
         </g>
 
         {/* Power labels */}
