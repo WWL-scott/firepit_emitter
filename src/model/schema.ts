@@ -17,6 +17,7 @@ export interface Config {
   emitterHeightIn: number;
   inletHeightAboveFlameIn: number;
   statorDropIn: number;
+  stackExtensionIn: number;
 
   UA_W_per_K: number;
 
@@ -41,4 +42,11 @@ export interface Results {
   irradiance_W_m2: number[];
   absorbedStandingW: number[];
   absorbedSeatedW: number[];
+  
+  stackExtensionAnalysis?: {
+    extensionIn: number;
+    additionalCaptureW: number;
+    totalWallCapturedW: number;
+    totalRadiantOutW: number;
+  }[];
 }

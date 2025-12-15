@@ -144,17 +144,16 @@ export function App() {
                 { value: 'custom', label: 'Custom (edit freely)' },
               ]}
               onChange={(v) => applyPreset(v as PresetKey)}
-            >
-              <Tooltip
-                title="Preset Configuration"
-                description="Pre-configured scenarios with different wall geometries and heat transfer characteristics. Each preset has optimized UA values based on expected swirl and surface enhancement."
-                relationships={[
-                  'Smooth: Minimal turbulence, lowest UA (~12 W/K)',
-                  'Ramp: Tapered walls create moderate swirl, medium UA (~20 W/K)',
-                  'Stator+Ramp: Maximum turbulence from stator blades, highest UA (~28 W/K)'
-                ]}
-              />
-            </SelectField>
+            />
+            <Tooltip
+              title="Preset Configuration"
+              description="Pre-configured scenarios with different wall geometries and heat transfer characteristics. Each preset has optimized UA values based on expected swirl and surface enhancement."
+              relationships={[
+                'Smooth: Minimal turbulence, lowest UA (~12 W/K)',
+                'Ramp: Tapered walls create moderate swirl, medium UA (~20 W/K)',
+                'Stator+Ramp: Maximum turbulence from stator blades, highest UA (~28 W/K)'
+              ]}
+            />
 
             <hr />
 
@@ -164,38 +163,36 @@ export function App() {
               label="Burner Power (BTU/h)" 
               value={cfg.burnerBtuPerHr} 
               onChange={(v) => setCfg({ ...cfg, burnerBtuPerHr: v })} 
-            >
-              <Tooltip
-                title="Burner Power"
-                description="Total heat input from the gas burner, measured in British Thermal Units per hour."
-                formula="P_burner [W] = BTU/h × 0.29307107"
-                units="BTU/h (British Thermal Units per hour)"
-                relationships={[
-                  'Higher BTU → More total heat available',
-                  'Typical patio firepits: 30,000-70,000 BTU/h',
-                  'Determines maximum possible radiant output'
-                ]}
-              />
-            </NumberField>
+            />
+            <Tooltip
+              title="Burner Power"
+              description="Total heat input from the gas burner, measured in British Thermal Units per hour."
+              formula="P_burner [W] = BTU/h × 0.29307107"
+              units="BTU/h (British Thermal Units per hour)"
+              relationships={[
+                'Higher BTU → More total heat available',
+                'Typical patio firepits: 30,000-70,000 BTU/h',
+                'Determines maximum possible radiant output'
+              ]}
+            />
 
             <NumberField 
               label="Convective Plume Fraction" 
               value={cfg.convectivePlumeFraction} 
               step={0.01} 
               onChange={(v) => setCfg({ ...cfg, convectivePlumeFraction: v })} 
-            >
-              <Tooltip
-                title="Convective Plume Fraction"
-                description="Portion of burner power that goes into hot rising gas (plume), rather than direct radiation from the flame."
-                formula="P_plume = P_burner × f_conv"
-                units="Dimensionless fraction (0-1)"
-                relationships={[
-                  'Typical range: 0.60-0.75 for gas burners',
-                  'Higher values = more heat in exhaust gases',
-                  'Remaining fraction (1 - f_conv) = direct flame radiation'
-                ]}
-              />
-            </NumberField>
+            />
+            <Tooltip
+              title="Convective Plume Fraction"
+              description="Portion of burner power that goes into hot rising gas (plume), rather than direct radiation from the flame."
+              formula="P_plume = P_burner × f_conv"
+              units="Dimensionless fraction (0-1)"
+              relationships={[
+                'Typical range: 0.60-0.75 for gas burners',
+                'Higher values = more heat in exhaust gases',
+                'Remaining fraction (1 - f_conv) = direct flame radiation'
+              ]}
+            />
 
             <hr />
 
@@ -206,60 +203,57 @@ export function App() {
               value={cfg.captureFraction} 
               step={0.01} 
               onChange={(v) => setCfg({ ...cfg, captureFraction: v })} 
-            >
-              <Tooltip
-                title="Capture Fraction"
-                description="Percentage of the convective plume that is captured by the emitter inlet (not lost to ambient)."
-                formula="P_captured = P_plume × f_capture × (1 - f_wind)"
-                units="Dimensionless fraction (0-1)"
-                relationships={[
-                  'Depends on inlet geometry and positioning',
-                  'Larger inlet diameter → higher capture',
-                  'Lower inlet height → better capture',
-                  'Wind reduces effective capture'
-                ]}
-              />
-            </NumberField>
+            />
+            <Tooltip
+              title="Capture Fraction"
+              description="Percentage of the convective plume that is captured by the emitter inlet (not lost to ambient)."
+              formula="P_captured = P_plume × f_capture × (1 - f_wind)"
+              units="Dimensionless fraction (0-1)"
+              relationships={[
+                'Depends on inlet geometry and positioning',
+                'Larger inlet diameter → higher capture',
+                'Lower inlet height → better capture',
+                'Wind reduces effective capture'
+              ]}
+            />
 
             <NumberField 
               label="Bypass Fraction (damper/leaks)" 
               value={cfg.bypassFraction} 
               step={0.01} 
               onChange={(v) => setCfg({ ...cfg, bypassFraction: v })} 
-            >
-              <Tooltip
-                title="Bypass Fraction"
-                description="Portion of captured gas that bypasses heat transfer due to damper openings, gaps, or short-circuiting flow paths."
-                formula="P_effective = P_captured × (1 - f_bypass)"
-                units="Dimensionless fraction (0-1)"
-                relationships={[
-                  'Typical range: 0.05-0.15',
-                  'Well-sealed damper: ~5% bypass',
-                  'Partially open damper: 15-30% bypass',
-                  'Reduces effective heat transfer'
-                ]}
-              />
-            </NumberField>
+            />
+            <Tooltip
+              title="Bypass Fraction"
+              description="Portion of captured gas that bypasses heat transfer due to damper openings, gaps, or short-circuiting flow paths."
+              formula="P_effective = P_captured × (1 - f_bypass)"
+              units="Dimensionless fraction (0-1)"
+              relationships={[
+                'Typical range: 0.05-0.15',
+                'Well-sealed damper: ~5% bypass',
+                'Partially open damper: 15-30% bypass',
+                'Reduces effective heat transfer'
+              ]}
+            />
 
             <NumberField 
               label="C effective (W/K) — mass flow × specific heat" 
               value={cfg.C_effective_W_per_K} 
               step={0.5} 
               onChange={(v) => setCfg({ ...cfg, C_effective_W_per_K: v })} 
-            >
-              <Tooltip
-                title="C Effective (Thermal Capacitance Rate)"
-                description="Product of gas mass flow rate and specific heat (ṁ·cp). Represents the thermal capacity of the gas stream."
-                formula="C = ṁ × cp [W/K]"
-                units="W/K (Watts per Kelvin)"
-                relationships={[
-                  'Higher C → gas can carry more heat',
-                  'Used in effectiveness formula: ε = 1 - exp(-UA/C)',
-                  'Typical range: 15-25 W/K for firepit exhaust',
-                  'Affects heat transfer effectiveness'
-                ]}
-              />
-            </NumberField>
+            />
+            <Tooltip
+              title="C Effective (Thermal Capacitance Rate)"
+              description="Product of gas mass flow rate and specific heat (ṁ·cp). Represents the thermal capacity of the gas stream."
+              formula="C = ṁ × cp [W/K]"
+              units="W/K (Watts per Kelvin)"
+              relationships={[
+                'Higher C → gas can carry more heat',
+                'Used in effectiveness formula: ε = 1 - exp(-UA/C)',
+                'Typical range: 15-25 W/K for firepit exhaust',
+                'Affects heat transfer effectiveness'
+              ]}
+            />
 
             <hr />
 
@@ -269,56 +263,53 @@ export function App() {
               label="Inlet Diameter (inches)" 
               value={cfg.inletDiameterIn} 
               onChange={(v) => setCfg({ ...cfg, inletDiameterIn: v })} 
-            >
-              <Tooltip
-                title="Inlet Diameter"
-                description="Diameter of the emitter at the base where hot gases enter."
-                formula="R_avg = (D_inlet + D_outlet) / 4"
-                units="inches"
-                relationships={[
-                  'Larger inlet → better plume capture',
-                  'Affects average radius for irradiance calculations',
-                  'Typical: 18-30 inches for patio scale'
-                ]}
-              />
-            </NumberField>
+            />
+            <Tooltip
+              title="Inlet Diameter"
+              description="Diameter of the emitter at the base where hot gases enter."
+              formula="R_avg = (D_inlet + D_outlet) / 4"
+              units="inches"
+              relationships={[
+                'Larger inlet → better plume capture',
+                'Affects average radius for irradiance calculations',
+                'Typical: 18-30 inches for patio scale'
+              ]}
+            />
 
             <NumberField 
               label="Outlet Diameter (inches)" 
               value={cfg.outletDiameterIn} 
               onChange={(v) => setCfg({ ...cfg, outletDiameterIn: v })} 
-            >
-              <Tooltip
-                title="Outlet Diameter"
-                description="Diameter of the emitter at the top where gases exit. Smaller outlets increase back-pressure and contact time."
-                formula="E(d) = P_IR / (2π × (d + R_avg)²)"
-                units="inches"
-                relationships={[
-                  '2-3": High pressure, best heat transfer, potential burner interference',
-                  '4-5": Balanced performance',
-                  '6"+: Low pressure, reduced capture',
-                  'See Outlet Diameter Comparison chart in Analysis view'
-                ]}
-              />
-            </NumberField>
+            />
+            <Tooltip
+              title="Outlet Diameter"
+              description="Diameter of the emitter at the top where gases exit. Smaller outlets increase back-pressure and contact time."
+              formula="E(d) = P_IR / (2π × (d + R_avg)²)"
+              units="inches"
+              relationships={[
+                '2-3": High pressure, best heat transfer, potential burner interference',
+                '4-5": Balanced performance',
+                '6"+: Low pressure, reduced capture',
+                'See Outlet Diameter Comparison chart in Analysis view'
+              ]}
+            />
 
             <NumberField 
               label="Emitter Height (inches)" 
               value={cfg.emitterHeightIn} 
               onChange={(v) => setCfg({ ...cfg, emitterHeightIn: v })} 
-            >
-              <Tooltip
-                title="Emitter Height"
-                description="Vertical distance from inlet to outlet. Greater height provides more surface area for heat transfer."
-                formula="Surface_Area ≈ π × (R_in + R_out) × √(h² + (R_in - R_out)²)"
-                units="inches"
-                relationships={[
-                  'Taller emitter → more contact time → more heat transfer',
-                  'Typical range: 10-18 inches',
-                  'Limited by structural and aesthetic constraints'
-                ]}
-              />
-            </NumberField>
+            />
+            <Tooltip
+              title="Emitter Height"
+              description="Vertical distance from inlet to outlet. Greater height provides more surface area for heat transfer."
+              formula="Surface_Area ≈ π × (R_in + R_out) × √(h² + (R_in - R_out)²)"
+              units="inches"
+              relationships={[
+                'Taller emitter → more contact time → more heat transfer',
+                'Typical range: 10-18 inches',
+                'Limited by structural and aesthetic constraints'
+              ]}
+            />
 
             <NumberField 
               label="Stack Extension (inches)" 
@@ -327,20 +318,19 @@ export function App() {
               min={0}
               max={6}
               onChange={(v) => setCfg({ ...cfg, stackExtensionIn: v })} 
-            >
-              <Tooltip
-                title="Stack Extension"
-                description="Additional vertical cylindrical extension above the main emitter outlet. Continues heat extraction from rising exhaust."
-                formula="Additional_Capture ≈ 0.12 × (1 - e^(-h/3)) × (h/6) × P_effective"
-                units="inches (0-6)"
-                relationships={[
-                  'Each inch adds more wall contact area',
-                  'Diminishing returns beyond 4-5 inches',
-                  'See Stack Extension Impact chart in Analysis view',
-                  'Outlet diameter determines stack diameter'
-                ]}
-              />
-            </NumberField>
+            />
+            <Tooltip
+              title="Stack Extension"
+              description="Additional vertical cylindrical extension above the main emitter outlet. Continues heat extraction from rising exhaust."
+              formula="Additional_Capture ≈ 0.12 × (1 - e^(-h/3)) × (h/6) × P_effective"
+              units="inches (0-6)"
+              relationships={[
+                'Each inch adds more wall contact area',
+                'Diminishing returns beyond 4-5 inches',
+                'See Stack Extension Impact chart in Analysis view',
+                'Outlet diameter determines stack diameter'
+              ]}
+            />
 
             <hr />
 
@@ -351,21 +341,20 @@ export function App() {
               value={cfg.UA_W_per_K} 
               step={1} 
               onChange={(v) => setCfg({ ...cfg, UA_W_per_K: v })} 
-            >
-              <Tooltip
-                title="UA (Overall Heat Transfer)"
-                description="Product of overall heat transfer coefficient (U) and surface area (A). Primary parameter for wall heat capture effectiveness."
-                formula="ε = 1 - exp(-UA/C)\nP_wall = P_effective × ε"
-                units="W/K (Watts per Kelvin)"
-                relationships={[
-                  'Smooth walls: UA ≈ 12-15 W/K',
-                  'Ramped walls: UA ≈ 18-22 W/K',
-                  'Stator + ramp: UA ≈ 25-32 W/K',
-                  'Higher UA → more heat extracted from gas',
-                  'Swirl and turbulence increase UA significantly'
-                ]}
-              />
-            </NumberField>
+            />
+            <Tooltip
+              title="UA (Overall Heat Transfer)"
+              description="Product of overall heat transfer coefficient (U) and surface area (A). Primary parameter for wall heat capture effectiveness."
+              formula="ε = 1 - exp(-UA/C)\nP_wall = P_effective × ε"
+              units="W/K (Watts per Kelvin)"
+              relationships={[
+                'Smooth walls: UA ≈ 12-15 W/K',
+                'Ramped walls: UA ≈ 18-22 W/K',
+                'Stator + ramp: UA ≈ 25-32 W/K',
+                'Higher UA → more heat extracted from gas',
+                'Swirl and turbulence increase UA significantly'
+              ]}
+            />
 
             <hr />
 
@@ -376,40 +365,38 @@ export function App() {
               value={cfg.etaRad} 
               step={0.01} 
               onChange={(v) => setCfg({ ...cfg, etaRad: v })} 
-            >
-              <Tooltip
-                title="η_rad (Radiation Efficiency)"
-                description="Fraction of wall-captured heat that is re-emitted as infrared radiation (vs. convection or conduction losses)."
-                formula="P_IR = P_wall × η_rad"
-                units="Dimensionless fraction (0-1)"
-                relationships={[
-                  'High-emissivity surfaces: η_rad ≈ 0.6-0.7',
-                  'Polished metal: η_rad ≈ 0.2-0.3',
-                  'Black-body approximation: η_rad → 0.8-0.9',
-                  'Temperature-dependent: higher T → higher radiation fraction'
-                ]}
-              />
-            </NumberField>
+            />
+            <Tooltip
+              title="η_rad (Radiation Efficiency)"
+              description="Fraction of wall-captured heat that is re-emitted as infrared radiation (vs. convection or conduction losses)."
+              formula="P_IR = P_wall × η_rad"
+              units="Dimensionless fraction (0-1)"
+              relationships={[
+                'High-emissivity surfaces: η_rad ≈ 0.6-0.7',
+                'Polished metal: η_rad ≈ 0.2-0.3',
+                'Black-body approximation: η_rad → 0.8-0.9',
+                'Temperature-dependent: higher T → higher radiation fraction'
+              ]}
+            />
 
             <NumberField 
               label="η_out — Outward delivery factor" 
               value={cfg.etaOut} 
               step={0.01} 
               onChange={(v) => setCfg({ ...cfg, etaOut: v })} 
-            >
-              <Tooltip
-                title="η_out (Outward Delivery Factor)"
-                description="Fraction of emitted IR that travels outward toward occupants (vs. upward or reflected back)."
-                formula="P_IR_out = P_IR × η_out"
-                units="Dimensionless fraction (0-1)"
-                relationships={[
-                  'Hemisphere geometry: η_out ≈ 0.5 (50% outward, 50% upward)',
-                  'Reflector/deflector: η_out → 0.7-0.8',
-                  'Flat emitter: η_out ≈ 0.6-0.65',
-                  'Geometry-dependent directional factor'
-                ]}
-              />
-            </NumberField>
+            />
+            <Tooltip
+              title="η_out (Outward Delivery Factor)"
+              description="Fraction of emitted IR that travels outward toward occupants (vs. upward or reflected back)."
+              formula="P_IR_out = P_IR × η_out"
+              units="Dimensionless fraction (0-1)"
+              relationships={[
+                'Hemisphere geometry: η_out ≈ 0.5 (50% outward, 50% upward)',
+                'Reflector/deflector: η_out → 0.7-0.8',
+                'Flat emitter: η_out ≈ 0.6-0.65',
+                'Geometry-dependent directional factor'
+              ]}
+            />
 
             <div style={{ 
               fontSize: 12, 
@@ -449,7 +436,7 @@ export function App() {
               <Kpi label="Burner Power" value={`${(results.burnerPowerW / 1000).toFixed(2)} kW`} />
               <Kpi label="Wall Captured" value={`${(results.wallCapturedW / 1000).toFixed(2)} kW`} />
               <Kpi label="IR Out (effective)" value={`${(results.radiantOutW / 1000).toFixed(2)} kW`} />
-              <Kpi label="Heat Transfer (ε)" value={`${(1 - Math.exp(-cfg.UA_W_per_K / cfg.C_effective_W_per_K)).toFixed(3)}`} />
+              <Kpi label="Avg Radius" value={`${results.effectiveRadiusFt.toFixed(2)} ft`} />
               <Kpi label="Capture Efficiency" value={`${((results.wallCapturedW / results.burnerPowerW) * 100).toFixed(1)}%`} />
               <Kpi label="IR Efficiency" value={`${((results.radiantOutW / results.burnerPowerW) * 100).toFixed(1)}%`} />
             </div>

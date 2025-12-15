@@ -13,10 +13,11 @@ export const baseConfig: Omit<Config, 'scenario' | 'UA_W_per_K'> = {
   C_effective_W_per_K: 17.0,
 
   inletDiameterIn: 24,
-  outletDiameterIn: 3,
+  outletDiameterIn: 4,
   emitterHeightIn: 12,
   inletHeightAboveFlameIn: 12,
   statorDropIn: 5,
+  stackExtensionIn: 0,
 
   etaRad: 0.55,
   etaOut: 0.65,

@@ -28,10 +28,15 @@ export function LineChart(props: {
     return h - padding.b - ((y - yMin) / (yMax - yMin)) * (h - padding.t - padding.b);
   }
 
-  const colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728'];
+  const colors = ['#667eea', '#f093fb', '#4facfe', '#fa709a'];
 
   return (
-    <svg width={w} height={h} style={{ border: '1px solid #eee', borderRadius: 12, background: 'white' }}>
+    <svg width={w} height={h} style={{ 
+      border: '1px solid #e9ecef', 
+      borderRadius: 12, 
+      background: 'linear-gradient(to bottom, #fafbfc 0%, #ffffff 100%)',
+      boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+    }}>
       <line x1={padding.l} y1={h - padding.b} x2={w - padding.r} y2={h - padding.b} stroke="#333" />
       <line x1={padding.l} y1={padding.t} x2={padding.l} y2={h - padding.b} stroke="#333" />
 

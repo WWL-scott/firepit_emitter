@@ -35,6 +35,29 @@ export function calcResults(cfg: Config): Results {
   const absorbedStandingW = irradiance.map((E) => E * cfg.projectedAreaStandingM2 * cfg.humanAbsorptivity);
   const absorbedSeatedW = irradiance.map((E) => E * cfg.projectedAreaSeatedM2 * cfg.humanAbsorptivity);
 
+  // Stack extension analysis: additional capture per inch of vertical extension
+  // Assumption: Each inch of stack captures additional exhaust with diminishing returns
+  const stackExtensionAnalysis = [1, 2, 3, 4, 5, 6].map((extensionIn) => {
+    // Additional surface area from extension (cylinder): 2*pi*r*h
+    const radiusIn = cfg.outletDiameterIn / 2;
+    const additionalAreaM2 = (2 * Math.PI * radiusIn * extensionIn) * 0.00064516; // in² to m²
+    
+    // Estimate additional heat transfer based on extended contact time
+    // Assume 10-15% additional effectiveness per inch, diminishing
+    const additionalEffectiveness = 0.12 * (1 - Math.exp(-extensionIn / 3));
+    const additionalCaptureW = capturedEffW * additionalEffectiveness * (extensionIn / 6);
+    
+    const totalWallCapturedW = wallCapturedW + additionalCaptureW;
+    const totalRadiantOutW = totalWallCapturedW * cfg.etaRad * cfg.etaOut;
+    
+    return {
+      extensionIn,
+      additionalCaptureW,
+      totalWallCapturedW,
+      totalRadiantOutW,
+    };
+  });
+
   return {
     burnerPowerW,
     plumePowerW,
@@ -45,5 +68,6 @@ export function calcResults(cfg: Config): Results {
     irradiance_W_m2: irradiance,
     absorbedStandingW,
     absorbedSeatedW,
+    stackExtensionAnalysis,
   };
 }
