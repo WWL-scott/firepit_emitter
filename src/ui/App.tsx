@@ -60,7 +60,16 @@ export function App() {
           WebkitTextFillColor: 'transparent',
           backgroundClip: 'text'
         }}>
-          🔥 Firepit Emitter Lab
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 12 }}>
+            <img
+              src={`${import.meta.env.BASE_URL}fire.svg`}
+              alt="Fire"
+              width={34}
+              height={34}
+              style={{ display: 'block' }}
+            />
+            <span>Firepit Emitter Lab</span>
+          </span>
         </h1>
         <p style={{ marginTop: 8, color: '#6c757d', fontSize: 15, lineHeight: 1.5 }}>
           Variable-driven thermal model for emitter-only designs (stator + ramp). Engineering approximation for concept validation.

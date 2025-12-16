@@ -188,6 +188,16 @@ function stepParticle(p: Particle, dt: number, design: SwirlDesign) {
   }
 }
 
+function circleArea(dIn: number) {
+  const r = dIn / 2;
+  return Math.PI * r * r;
+}
+
+function fmtW(w: number) {
+  if (!Number.isFinite(w)) return '—';
+  return `${w.toFixed(0)} W`;
+}
+
 function windTunnelPanel(props: {
   title: string;
   subtitleRight: string;
@@ -269,6 +279,8 @@ export function FlowTunnelAnimations(props: {
 }) {
   const [designId, setDesignId] = useState<SwirlDesignId>('outerStator');
   const [outletSelIn, setOutletSelIn] = useState<number>(() => clamp(props.config.outletDiameterIn ?? 3, 2, 5));
+  const [jetDiaIn, setJetDiaIn] = useState<number>(6);
+  const [jetStartIn, setJetStartIn] = useState<number>(1);
   const design = useMemo(() => DESIGNS.find((d) => d.id === designId) ?? DESIGNS[0], [designId]);
 
   const pxPerIn = 10;
@@ -295,6 +307,21 @@ export function FlowTunnelAnimations(props: {
     return list;
   }, [particleCount]);
 
+
+  // Annular jet geometry controls (used primarily by the centerbody design)
+  const jetDiaClamped = useMemo(() => clamp(jetDiaIn, 2, 10), [jetDiaIn]);
+  const jetStartClamped = useMemo(() => clamp(jetStartIn, 0, Math.max(0, props.config.emitterHeightIn - 1)), [jetStartIn, props.config.emitterHeightIn]);
+  const jetStartZ = useMemo(() => (props.config.emitterHeightIn > 0 ? clamp(jetStartClamped / props.config.emitterHeightIn, 0, 0.95) : 0), [jetStartClamped, props.config.emitterHeightIn]);
+  const rMinFromJet = useMemo(() => {
+    const jetRNorm = clamp(jetDiaClamped / props.config.inletDiameterIn, 0.04, 0.55);
+    return (z: number) => {
+      if (z < jetStartZ) return 0;
+      // taper slightly with height (jet tip narrows)
+      const t = clamp((z - jetStartZ) / Math.max(0.35, 1 - jetStartZ), 0, 1);
+      return clamp(lerp(jetRNorm, jetRNorm * 0.75, t), 0.04, 0.55);
+    };
+  }, [jetDiaClamped, props.config.inletDiameterIn, jetStartZ]);
+
   useEffect(() => {
     let raf = 0;
     lastTRef.current = null;
@@ -304,14 +331,17 @@ export function FlowTunnelAnimations(props: {
       const dt = clamp((tMs - lastTRef.current) / 1000, 0, 0.05);
       lastTRef.current = tMs;
 
-      for (const p of particlesRef.current) stepParticle(p, dt, design);
+      // If we're in centerbody mode, enforce annular blocking via rMinFromJet.
+      const activeDesign: SwirlDesign = design.overlay === 'centerbody' ? { ...design, rMin: rMinFromJet } : design;
+
+      for (const p of particlesRef.current) stepParticle(p, dt, activeDesign);
       bump((n) => (n + 1) % 1_000_000);
       raf = requestAnimationFrame(tick);
     };
 
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [design]);
+  }, [design, rMinFromJet]);
 
   const conePath = useMemo(() => {
     return `M ${cx - inletR} ${bottomY} L ${cx - outletR} ${topY} L ${cx + outletR} ${topY} L ${cx + inletR} ${bottomY} Z`;
@@ -342,23 +372,45 @@ export function FlowTunnelAnimations(props: {
   const heatToWallFrac = capturedPlumeW > 0 ? clamp(wallCapturedW / capturedPlumeW, 0, 1) : 0;
   const subtitle = `${props.config.inletDiameterIn}" inlet → ${outletSelIn}" outlet, ${props.config.emitterHeightIn}" tall`;
 
+  // Simple restriction/backpressure proxy using open flow area (qualitative): smaller area -> higher restriction index.
+  // Baseline reference: 3" outlet only.
+  const outletArea = circleArea(outletSelIn);
+  const outletAreaRef = circleArea(3);
+  const restrictionIndexOutletOnly = outletArea > 0 ? clamp(outletAreaRef / outletArea, 0.25, 10) : 10;
+
+  // Side ports configuration (for the "outward outlet ports" animation row)
+  const sidePortsEnabled = true;
+  const sidePortCount = 10;
+  const sidePortDiaIn = 1; // assumption for visualization + numbers
+  const sidePortsArea = sidePortCount * circleArea(sidePortDiaIn);
+  // Effective vent area = top outlet + ports. (Real flow depends on losses and jetting; this is just a first-order proxy.)
+  const effectiveVentArea = outletArea + sidePortsArea;
+  const restrictionIndexWithPorts = effectiveVentArea > 0 ? clamp(outletAreaRef / effectiveVentArea, 0.1, 10) : 10;
+
+  const backpressureFlag = outletSelIn <= 2 ? 'High risk' : outletSelIn <= 2.5 ? 'Moderate risk' : 'Lower risk';
+
   // Side view particle projection
   const sideDots = particles.map((p, i) => {
     const z = p.z;
-    const y = lerp(bottomY, topY, clamp(z, 0, 1));
+    const y =
+      z < 0
+        ? lerp(bottomY, topY, 0) + (-z) * (heightPx * 0.45)
+        : z <= 1
+          ? lerp(bottomY, topY, z)
+          : lerp(bottomY, topY, 1) - (z - 1) * (heightPx * 0.55);
 
     const inEmitter = z >= 0 && z <= 1;
     const rWall = frustumRadiusAtZ(inletR, outletR, clamp(z, 0, 1));
 
     // outside: widen a bit to show plume approaching
-    const outsideExpand = z < 0 ? 1.10 : 1.0;
+    const outsideExpand = z < 0 ? 1.1 : 1.0;
 
     const rPx = p.r * rWall * outsideExpand;
     const x = cx + rPx * Math.cos(p.theta);
 
     // Fade particles as energy transfers to the wall (qualitative): more transfer as z increases.
     const transferAtZ = inEmitter ? heatToWallFrac * smoothstep(0.02, 1.0, clamp(z, 0, 1)) : 0;
-    const alpha = inEmitter ? lerp(0.90, 0.26, transferAtZ) : 0.35;
+    const alpha = inEmitter ? lerp(0.9, 0.26, transferAtZ) : 0.35;
     const radius = inEmitter ? 2.0 : 1.7;
 
     return <circle key={i} cx={x} cy={y} r={radius} fill="#6c757d" opacity={alpha} />;
@@ -369,13 +421,10 @@ export function FlowTunnelAnimations(props: {
     const z = clamp(p.z, 0, 1);
     const sliceR = frustumRadiusAtZ(inletR, outletR, z);
     const rMin = design.rMin ? design.rMin(z) : 0;
-    const effectiveR = sliceR * (clamp(p.r, rMin + 0.02, 0.98));
+    const effectiveR = sliceR * clamp(p.r, rMin + 0.02, 0.98);
 
-    const w = 520;
-    const h = 340;
-    const tcx = w / 2;
-    const tcy = h / 2 + 10;
-
+    const tcx = 520 / 2;
+    const tcy = 340 / 2 + 10;
     const x = tcx + effectiveR * Math.cos(p.theta);
     const y = tcy + effectiveR * Math.sin(p.theta);
 
@@ -395,7 +444,25 @@ export function FlowTunnelAnimations(props: {
   const statorOuterInner = topOuterR * 0.72;
   const statorFullInner = topOuterR * 0.35;
 
-  const centerbodyR = topOuterR * 0.28;
+  const jetRpx = (jetDiaClamped / 2) * pxPerIn;
+
+  // Side port sizing (to-scale between side/top views)
+  const sidePortDiaPx = sidePortDiaIn * pxPerIn;
+  const sidePortRPx = clamp(sidePortDiaPx / 2, 3, 10);
+
+  // For consistent top-view geometry of near-top ports: draw a slice near the top.
+  const sidePortsSliceZ = 0.95;
+  const sidePortsSliceR = frustumRadiusAtZ(inletR, outletR, sidePortsSliceZ);
+
+  // IMPORTANT: compute every render (particles mutate in-place), so top-view side-port dots animate.
+  const sidePortsTopDots = particles
+    .filter((p) => Math.abs(p.z - sidePortsSliceZ) < 0.12)
+    .map((p, i) => {
+      const effectiveR = sidePortsSliceR * clamp(p.r, 0.1, 0.98);
+      const x = tc.x + effectiveR * Math.cos(p.theta);
+      const y = tc.y + effectiveR * Math.sin(p.theta);
+      return <circle key={i} cx={x} cy={y} r={1.9} fill="#6c757d" opacity={0.55} />;
+    });
 
   return (
     <div
@@ -409,9 +476,7 @@ export function FlowTunnelAnimations(props: {
     >
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 16 }}>
         <div>
-          <h3 style={{ marginTop: 0, marginBottom: 6, fontSize: 18, fontWeight: 600, color: '#212529' }}>
-            Flow Animation (wind-tunnel style)
-          </h3>
+          <h3 style={{ marginTop: 0, marginBottom: 6, fontSize: 18, fontWeight: 600, color: '#212529' }}>Flow Animation (wind-tunnel style)</h3>
           <div style={{ color: '#6c757d', fontSize: 12, lineHeight: 1.5 }}>
             Animated particles approximate how the plume approaches, enters, and (optionally) spins/attaches to the inner wall. This is a
             qualitative visualization to compare concepts.
@@ -458,9 +523,57 @@ export function FlowTunnelAnimations(props: {
                   cursor: 'pointer',
                 }}
               >
-                {[2, 3, 4, 5].map((d) => (
+                {[1, 2, 3, 4, 5].map((d) => (
                   <option key={d} value={d}>
-                    {d}"
+                    {d}\" 
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <label style={{ display: 'block', marginBottom: 0 }}>
+              <div style={{ fontSize: 13, color: '#495057', fontWeight: 500, marginBottom: 6 }}>Annular jet diameter</div>
+              <select
+                value={jetDiaClamped}
+                onChange={(e) => setJetDiaIn(Number(e.target.value))}
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  borderRadius: 8,
+                  border: '1px solid #dee2e6',
+                  fontSize: 14,
+                  backgroundColor: 'white',
+                  cursor: 'pointer',
+                }}
+              >
+                {[2, 3, 4, 5, 6, 7, 8, 9, 10].map((d) => (
+                  <option key={d} value={d}>
+                    {d}\" 
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label style={{ display: 'block', marginBottom: 0 }}>
+              <div style={{ fontSize: 13, color: '#495057', fontWeight: 500, marginBottom: 6 }}>Jet start above inlet</div>
+              <select
+                value={jetStartClamped}
+                onChange={(e) => setJetStartIn(Number(e.target.value))}
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  borderRadius: 8,
+                  border: '1px solid #dee2e6',
+                  fontSize: 14,
+                  backgroundColor: 'white',
+                  cursor: 'pointer',
+                }}
+              >
+                {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((d) => (
+                  <option key={d} value={d}>
+                    {d}\" 
                   </option>
                 ))}
               </select>
@@ -494,14 +607,9 @@ export function FlowTunnelAnimations(props: {
                 background: 'linear-gradient(to bottom, #fafbfc 0%, #ffffff 100%)',
               }}
             >
-              {/* outside plume region */}
-              <rect x={0} y={bottomY + 2} width={viewW} height={viewH - (bottomY + 2)} fill="#ffffff" opacity={0} />
-
-              {/* emitter outline (wall glow intensity ∝ heat transferred) */}
-              <path d={conePath} fill="#1a1a1a" opacity={0.10} stroke="#000" strokeWidth={2} />
+              <path d={conePath} fill="#1a1a1a" opacity={0.1} stroke="#000" strokeWidth={2} />
               <path d={conePath} fill="none" stroke="#667eea" strokeWidth={3} opacity={clamp(0.08 + heatToWallFrac * 0.55, 0.08, 0.65)} />
 
-              {/* centerbody hint */}
               {design.overlay === 'centerbody' && (
                 <path
                   d={`M ${cx} ${bottomY - 6} L ${cx - inletR * 0.16} ${bottomY - heightPx * 0.22} L ${cx} ${bottomY - heightPx * 0.40} L ${cx + inletR * 0.16} ${bottomY - heightPx * 0.22} Z`}
@@ -512,26 +620,24 @@ export function FlowTunnelAnimations(props: {
                 />
               )}
 
-              {/* stator plane hint near inlet */}
-              {(design.overlay === 'statorOuter' || design.overlay === 'statorFull' || design.overlay === 'fins' || design.overlay === 'propeller' || design.overlay === 'centerbody') && (
-                <line
-                  x1={cx - inletR}
-                  y1={bottomY - 14}
-                  x2={cx + inletR}
-                  y2={bottomY - 14}
-                  stroke="#adb5bd"
-                  strokeWidth={2}
-                  opacity={0.45}
-                />
+              {design.overlay === 'centerbody' && (
+                <text x={16} y={40} fontSize={11} fill="#6c757d">
+                  annular jet dia {jetDiaClamped}\", start {jetStartClamped}\" above inlet
+                </text>
               )}
 
-              {/* helical fin hints */}
+              {(design.overlay === 'statorOuter' ||
+                design.overlay === 'statorFull' ||
+                design.overlay === 'fins' ||
+                design.overlay === 'propeller' ||
+                design.overlay === 'centerbody') && (
+                <line x1={cx - inletR} y1={bottomY - 14} x2={cx + inletR} y2={bottomY - 14} stroke="#adb5bd" strokeWidth={2} opacity={0.45} />
+              )}
+
               {design.overlay === 'fins' && drawHelicalFins({ cx, topY, bottomY, inletR, outletR })}
 
-              {/* particles */}
               {sideDots}
 
-              {/* labels */}
               <text x={16} y={24} fontSize={11} fill="#495057">
                 Upward plume approaches from below; inside the frustum it may spin and migrate to the wall.
               </text>
@@ -556,16 +662,12 @@ export function FlowTunnelAnimations(props: {
                 background: 'linear-gradient(to bottom, #fafbfc 0%, #ffffff 100%)',
               }}
             >
-              {/* outer lip */}
               <circle cx={tc.x} cy={tc.y} r={topOuterR} fill="#151515" opacity={0.08} stroke="#000" strokeWidth={2} />
-
-              {/* outlet opening */}
               <circle cx={tc.x} cy={tc.y} r={topInnerR} fill="#000" opacity={0.05} stroke="#000" strokeWidth={2} />
 
-              {/* stator overlays */}
               {showStatorOuter && (
                 <>
-                  <circle cx={tc.x} cy={tc.y} r={topOuterR * 0.95} fill="none" stroke="#adb5bd" strokeWidth={1.6} opacity={0.40} />
+                  <circle cx={tc.x} cy={tc.y} r={topOuterR * 0.95} fill="none" stroke="#adb5bd" strokeWidth={1.6} opacity={0.4} />
                   <circle cx={tc.x} cy={tc.y} r={statorOuterInner} fill="none" stroke="#adb5bd" strokeWidth={1.6} opacity={0.25} />
                   {drawStatorVanes({ cx: tc.x, cy: tc.y, rOuter: topOuterR * 0.92, rInner: statorOuterInner, count: 12, swirl: -0.45, opacity: 0.55 })}
                 </>
@@ -573,7 +675,7 @@ export function FlowTunnelAnimations(props: {
 
               {showStatorFull && (
                 <>
-                  <circle cx={tc.x} cy={tc.y} r={topOuterR * 0.95} fill="none" stroke="#adb5bd" strokeWidth={1.6} opacity={0.40} />
+                  <circle cx={tc.x} cy={tc.y} r={topOuterR * 0.95} fill="none" stroke="#adb5bd" strokeWidth={1.6} opacity={0.4} />
                   <circle cx={tc.x} cy={tc.y} r={statorFullInner} fill="none" stroke="#adb5bd" strokeWidth={1.6} opacity={0.25} />
                   {drawStatorVanes({ cx: tc.x, cy: tc.y, rOuter: topOuterR * 0.92, rInner: statorFullInner, count: 14, swirl: -0.45, opacity: 0.55 })}
                 </>
@@ -585,22 +687,22 @@ export function FlowTunnelAnimations(props: {
                   {[0, 1, 2].map((i) => {
                     const a = (i / 3) * Math.PI * 2;
                     const r1 = topOuterR * 0.18;
-                    const r2 = topOuterR * 0.70;
+                    const r2 = topOuterR * 0.7;
                     const x1 = tc.x + r1 * Math.cos(a);
                     const y1 = tc.y + r1 * Math.sin(a);
                     const x2 = tc.x + r2 * Math.cos(a + 0.55);
                     const y2 = tc.y + r2 * Math.sin(a + 0.55);
-                    return <path key={i} d={`M ${x1} ${y1} L ${x2} ${y2}`} stroke="#bdbdbd" strokeWidth={6} opacity={0.50} strokeLinecap="round" />;
+                    return <path key={i} d={`M ${x1} ${y1} L ${x2} ${y2}`} stroke="#bdbdbd" strokeWidth={6} opacity={0.5} strokeLinecap="round" />;
                   })}
                 </>
               )}
 
               {design.overlay === 'centerbody' && (
                 <>
-                  <circle cx={tc.x} cy={tc.y} r={centerbodyR} fill="#2f2f2f" opacity={0.50} stroke="#000" strokeWidth={1.6} />
+                  <circle cx={tc.x} cy={tc.y} r={jetRpx} fill="#2f2f2f" opacity={0.5} stroke="#000" strokeWidth={1.6} />
                   {[0, 1, 2, 3].map((i) => {
                     const a = (i / 4) * Math.PI * 2;
-                    const r1 = centerbodyR * 1.05;
+                    const r1 = jetRpx * 1.05;
                     const r2 = topOuterR * 0.78;
                     const x1 = tc.x + r1 * Math.cos(a);
                     const y1 = tc.y + r1 * Math.sin(a);
@@ -611,7 +713,6 @@ export function FlowTunnelAnimations(props: {
                 </>
               )}
 
-              {/* particles */}
               {topDots}
 
               <text x={16} y={24} fontSize={11} fill="#495057">
@@ -622,16 +723,125 @@ export function FlowTunnelAnimations(props: {
         })}
       </div>
 
-      {/* Metrics + assumptions/formulas */}
       <div
         style={{
           marginTop: 14,
-          background: '#f8f9fa',
-          border: '1px solid #e9ecef',
-          borderRadius: 12,
-          padding: 14,
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))',
+          gap: 14,
+          alignItems: 'start',
         }}
       >
+        {windTunnelPanel({
+          title: 'Side ports (near-top outlets) — side view',
+          subtitleRight: `${sidePortCount} × ${sidePortDiaIn}\" ports assumed`,
+          children: (
+            <svg
+              width={viewW}
+              height={viewH}
+              viewBox={`0 0 ${viewW} ${viewH}`}
+              style={{
+                border: '1px solid #e9ecef',
+                borderRadius: 12,
+                background: 'linear-gradient(to bottom, #fafbfc 0%, #ffffff 100%)',
+              }}
+            >
+              <defs>
+                <linearGradient id="portJet" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="#6c757d" stopOpacity={0.28} />
+                  <stop offset="70%" stopColor="#6c757d" stopOpacity={0.1} />
+                  <stop offset="100%" stopColor="#6c757d" stopOpacity={0.0} />
+                </linearGradient>
+                <linearGradient id="portJetLeft" x1="100%" y1="0%" x2="0%" y2="0%">
+                  <stop offset="0%" stopColor="#6c757d" stopOpacity={0.28} />
+                  <stop offset="70%" stopColor="#6c757d" stopOpacity={0.1} />
+                  <stop offset="100%" stopColor="#6c757d" stopOpacity={0.0} />
+                </linearGradient>
+              </defs>
+
+              <path d={conePath} fill="#1a1a1a" opacity={0.08} stroke="#000" strokeWidth={2} />
+
+              {sidePortsEnabled &&
+                [0.9, 0.93, 0.96, 0.99].map((t, i) => {
+                  const y = lerp(bottomY, topY, t);
+                  const rHere = frustumRadiusAtZ(inletR, outletR, t);
+                  const xR = cx + rHere * 0.92;
+                  const xL = cx - rHere * 0.92;
+                  const jetLen = 70;
+                  const jetHalf = Math.max(5, sidePortRPx * 0.9);
+
+                  return (
+                    <g key={i}>
+                      <circle cx={xR} cy={y} r={sidePortRPx} fill="#bdbdbd" opacity={0.55} stroke="#000" strokeWidth={1} />
+                      <circle cx={xL} cy={y + 4} r={sidePortRPx} fill="#bdbdbd" opacity={0.55} stroke="#000" strokeWidth={1} />
+
+                      <polygon points={`${xR},${y} ${xR + jetLen},${y - jetHalf} ${xR + jetLen},${y + jetHalf}`} fill="url(#portJet)" opacity={0.9} />
+                      <polygon
+                        points={`${xL},${y + 4} ${xL - jetLen},${y + 4 - jetHalf} ${xL - jetLen},${y + 4 + jetHalf}`}
+                        fill="url(#portJetLeft)"
+                        opacity={0.9}
+                      />
+                    </g>
+                  );
+                })}
+
+              {sideDots}
+
+              <text x={16} y={24} fontSize={11} fill="#495057">
+                Concept: exhaust vents sideways through ports near the top.
+              </text>
+            </svg>
+          ),
+        })}
+
+        {windTunnelPanel({
+          title: 'Side ports — top view',
+          subtitleRight: 'slice near top; jet/port size to-scale',
+          children: (
+            <svg
+              width={w}
+              height={h}
+              viewBox={`0 0 ${w} ${h}`}
+              style={{
+                border: '1px solid #e9ecef',
+                borderRadius: 12,
+                background: 'linear-gradient(to bottom, #fafbfc 0%, #ffffff 100%)',
+              }}
+            >
+              <circle cx={tc.x} cy={tc.y} r={topOuterR} fill="#151515" opacity={0.025} stroke="#000" strokeWidth={1.6} />
+              <circle cx={tc.x} cy={tc.y} r={topInnerR} fill="#000" opacity={0.02} stroke="#000" strokeWidth={1.2} />
+
+              <circle cx={tc.x} cy={tc.y} r={sidePortsSliceR} fill="#151515" opacity={0.06} stroke="#000" strokeWidth={2} />
+              <circle cx={tc.x} cy={tc.y} r={sidePortsSliceR * 0.62} fill="#000" opacity={0.03} stroke="#000" strokeWidth={1.6} />
+
+              {[...Array(sidePortCount)].map((_, i) => {
+                const a = (i / sidePortCount) * Math.PI * 2;
+                const rp = sidePortsSliceR * 0.9;
+                const x = tc.x + rp * Math.cos(a);
+                const y = tc.y + rp * Math.sin(a);
+                const jetLen = Math.max(18, sidePortDiaPx * 2.1);
+                const rJet = rp + jetLen;
+                const x2 = tc.x + rJet * Math.cos(a);
+                const y2 = tc.y + rJet * Math.sin(a);
+                const jetStroke = clamp(sidePortDiaPx * 0.9, 4, 14);
+                return (
+                  <g key={i}>
+                    <path d={`M ${x} ${y} L ${x2} ${y2}`} stroke="#6c757d" strokeWidth={jetStroke} opacity={0.16} strokeLinecap="round" />
+                    <circle cx={x} cy={y} r={sidePortRPx} fill="#bdbdbd" opacity={0.55} stroke="#000" strokeWidth={1} />
+                  </g>
+                );
+              })}
+
+              {sidePortsTopDots}
+              <text x={16} y={24} fontSize={11} fill="#495057">
+                With enough port area, a smaller top outlet can still vent flow.
+              </text>
+            </svg>
+          ),
+        })}
+      </div>
+
+      <div style={{ marginTop: 14, background: '#f8f9fa', border: '1px solid #e9ecef', borderRadius: 12, padding: 14 }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
           <div style={{ background: 'white', border: '1px solid #e9ecef', borderRadius: 10, padding: 12 }}>
             <div style={{ fontSize: 12, color: '#6c757d', marginBottom: 6 }}>Energy split (captured plume)</div>
@@ -644,6 +854,12 @@ export function FlowTunnelAnimations(props: {
               </div>
               <div>
                 <strong>Radiant out:</strong> {radiantOutW.toFixed(0)} W
+              </div>
+              <div style={{ marginTop: 6, fontSize: 12, color: '#6c757d' }}>
+                Restriction (outlet-only): ×{restrictionIndexOutletOnly.toFixed(2)}; backpressure risk: <strong>{backpressureFlag}</strong>
+              </div>
+              <div style={{ fontSize: 12, color: '#6c757d' }}>
+                With side ports: ×{restrictionIndexWithPorts.toFixed(2)} (assumes {sidePortCount}×{sidePortDiaIn}\")
               </div>
             </div>
 
@@ -696,6 +912,7 @@ export function FlowTunnelAnimations(props: {
               </div>
               <div style={{ marginTop: 8, color: '#6c757d' }}>
                 Note: This animation is qualitative; numbers come from the same simplified thermal model used elsewhere in the app.
+                Restriction/backpressure is shown as a relative index based on open vent area (not a CFD pressure prediction).
               </div>
             </div>
           </div>
