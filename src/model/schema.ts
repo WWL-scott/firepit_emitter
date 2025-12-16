@@ -35,7 +35,12 @@ export interface Results {
   burnerPowerW: number;
   plumePowerW: number;
   capturedPlumeW: number;
+  capturedEffW?: number;
+  bypassEff?: number;
+  UA_eff?: number;
+  eps?: number;
   wallCapturedW: number;
+  outletExhaustW?: number;
   radiantOutW: number;
   effectiveRadiusFt: number;
 

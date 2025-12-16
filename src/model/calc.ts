@@ -42,6 +42,10 @@ export function calcResults(cfg: Config): Results {
   const eps = effectiveness(UA_eff, cfg.C_effective_W_per_K);
   const wallCapturedW = capturedEffW * eps;
 
+  // Heat remaining in the exhaust leaving the emitter outlet (captured plume not transferred to wall).
+  // Includes both bypassed heat and residual heat of the processed stream.
+  const outletExhaustW = capturedPlumeW - wallCapturedW;
+
   const radiantOutW = wallCapturedW * cfg.etaRad * cfg.etaOut;
 
   const rAvgFt = avgRadiusFt(cfg.inletDiameterIn, cfg.outletDiameterIn);
@@ -82,7 +86,12 @@ export function calcResults(cfg: Config): Results {
     burnerPowerW,
     plumePowerW,
     capturedPlumeW,
+    capturedEffW,
+    bypassEff,
+    UA_eff,
+    eps,
     wallCapturedW,
+    outletExhaustW,
     radiantOutW,
     effectiveRadiusFt: rAvgFt,
     irradiance_W_m2: irradiance,
