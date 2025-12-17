@@ -11,9 +11,10 @@ import { StackAnalysisChart } from './components/StackAnalysisChart';
 import { OutletDiameterComparison } from './components/OutletDiameterComparison';
 import { ReferenceArchive } from './components/ReferenceArchive';
 import { FlowTunnelAnimations, SWIRL_DESIGNS, type SwirlDesignId } from './components/FlowTunnelAnimations';
+import { BlowerView } from './components/BlowerView';
 
 type PresetKey = 'smooth' | 'ramp' | 'statorRamp' | 'custom';
-type ViewMode = 'main' | 'visual' | 'analysis' | 'docs';
+type ViewMode = 'main' | 'visual' | 'analysis' | 'docs' | 'blower';
 
 const presets: Record<Exclude<PresetKey,'custom'>, () => Config> = {
   smooth: presetSmooth,
@@ -138,6 +139,7 @@ export function App() {
             { key: 'visual', label: '🎨 Visual Model', icon: '🎨' },
             { key: 'analysis', label: '📈 Analysis & Charts', icon: '📈' },
             { key: 'docs', label: '📚 Documentation', icon: '📚' },
+            { key: 'blower', label: '🌀 Blower', icon: '🌀' },
           ].map(tab => (
             <button
               key={tab.key}
@@ -582,6 +584,13 @@ export function App() {
               <div><strong>Volume:</strong> {((Math.PI / 12) * cfg.emitterHeightIn * ((cfg.inletDiameterIn/2)**2 + (cfg.inletDiameterIn/2)*(cfg.outletDiameterIn/2) + (cfg.outletDiameterIn/2)**2) / 231).toFixed(2)} gal</div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Blower View */}
+      {viewMode === 'blower' && (
+        <div>
+          <BlowerView config={cfg} />
         </div>
       )}
 
