@@ -274,10 +274,52 @@ function drawHelicalFins(params: { cx: number; topY: number; bottomY: number; in
   return ribs;
 }
 
+function drawVanePlate(params: {
+  cx: number;
+  cy: number;
+  rInner: number;
+  rOuter: number;
+  a0: number;
+  a1: number;
+  fill?: string;
+  fillOpacity?: number;
+  stroke?: string;
+  strokeOpacity?: number;
+  strokeWidth?: number;
+}) {
+  const { cx, cy, rInner, rOuter, a0, a1 } = params;
+  const fill = params.fill ?? '#bdbdbd';
+  const fillOpacity = params.fillOpacity ?? 0.55;
+  const stroke = params.stroke ?? '#000';
+  const strokeOpacity = params.strokeOpacity ?? 0.32;
+  const strokeWidth = params.strokeWidth ?? 1.6;
+
+  const x1 = cx + rOuter * Math.cos(a0);
+  const y1 = cy + rOuter * Math.sin(a0);
+  const x2 = cx + rOuter * Math.cos(a1);
+  const y2 = cy + rOuter * Math.sin(a1);
+  const x3 = cx + rInner * Math.cos(a1);
+  const y3 = cy + rInner * Math.sin(a1);
+  const x4 = cx + rInner * Math.cos(a0);
+  const y4 = cy + rInner * Math.sin(a0);
+
+  const large = Math.abs(a1 - a0) > Math.PI ? 1 : 0;
+  const sweep = a1 > a0 ? 1 : 0;
+
+  const d =
+    `M ${x1} ${y1} ` +
+    `A ${rOuter} ${rOuter} 0 ${large} ${sweep} ${x2} ${y2} ` +
+    `L ${x3} ${y3} ` +
+    `A ${rInner} ${rInner} 0 ${large} ${1 - sweep} ${x4} ${y4} ` +
+    `Z`;
+
+  return <path d={d} fill={fill} fillOpacity={fillOpacity} stroke={stroke} strokeOpacity={strokeOpacity} strokeWidth={strokeWidth} />;
+}
+
 export function FlowTunnelAnimations(props: {
   config: Config;
 }) {
-  const [designId, setDesignId] = useState<SwirlDesignId>('outerStator');
+  const [designId, setDesignId] = useState<SwirlDesignId>('propeller');
   const [outletSelIn, setOutletSelIn] = useState<number>(() => clamp(props.config.outletDiameterIn ?? 3, 2, 5));
   const [jetDiaIn, setJetDiaIn] = useState<number>(6);
   const [jetStartIn, setJetStartIn] = useState<number>(1);
@@ -297,9 +339,22 @@ export function FlowTunnelAnimations(props: {
 
   const particlesRef = useRef<Particle[]>([]);
   const lastTRef = useRef<number | null>(null);
+  const swirlerContactRef = useRef(
+    new WeakMap<
+      Particle,
+      {
+        segIndex: number;
+        zContact: number;
+        xContact: number;
+        yContact: number;
+        tx: number;
+        ty: number;
+      }
+    >()
+  );
   const [, bump] = useState(0);
 
-  const particleCount = 140;
+  const particleCount = 168;
 
   const particles = useMemo(() => {
     const list = [...Array(particleCount)].map((_, i) => createParticle(i + 1));
@@ -446,22 +501,121 @@ export function FlowTunnelAnimations(props: {
 
   const jetRpx = (jetDiaClamped / 2) * pxPerIn;
 
-  // Side port sizing (to-scale between side/top views)
-  const sidePortDiaPx = sidePortDiaIn * pxPerIn;
-  const sidePortRPx = clamp(sidePortDiaPx / 2, 3, 10);
+  // Axial swirler close-up slices (qualitative): show particles just before/over/just after the swirler.
+  const swirlerZ0 = 0.06;
+  const swirlerZ1 = 0.22;
+  const swirlerZ2 = 0.34;
 
-  // For consistent top-view geometry of near-top ports: draw a slice near the top.
-  const sidePortsSliceZ = 0.95;
-  const sidePortsSliceR = frustumRadiusAtZ(inletR, outletR, sidePortsSliceZ);
+  // Side-cut fin segments for close-up (in panel pixel coordinates)
+  const swirlerFinSegments = useMemo(() => {
+    const segs: Array<{ x0: number; y0: number; x1: number; y1: number }> = [];
+    for (let i = 0; i < 3; i++) {
+      const x0 = viewW / 2 - 70 + i * 70;
+      const y0 = 140;
+      const x1 = x0 + 46;
+      const y1 = y0 + 70;
+      segs.push({ x0, y0, x1, y1 });
+    }
+    return segs;
+  }, [viewW]);
 
-  // IMPORTANT: compute every render (particles mutate in-place), so top-view side-port dots animate.
-  const sidePortsTopDots = particles
-    .filter((p) => Math.abs(p.z - sidePortsSliceZ) < 0.12)
+  const closestPointOnSegment = useMemo(() => {
+    return (px: number, py: number, s: { x0: number; y0: number; x1: number; y1: number }) => {
+      const vx = s.x1 - s.x0;
+      const vy = s.y1 - s.y0;
+      const wx = px - s.x0;
+      const wy = py - s.y0;
+      const vv = vx * vx + vy * vy;
+      const t = vv > 0 ? clamp((wx * vx + wy * vy) / vv, 0, 1) : 0;
+      return { x: s.x0 + t * vx, y: s.y0 + t * vy, t };
+    };
+  }, []);
+
+  // IMPORTANT: compute every render (particles mutate in-place), so close-up dots animate.
+  const swirlerSideDots = particles
+    .filter((p) => p.z >= swirlerZ0 && p.z <= swirlerZ2)
     .map((p, i) => {
-      const effectiveR = sidePortsSliceR * clamp(p.r, 0.1, 0.98);
+      const tZ = clamp((p.z - swirlerZ0) / Math.max(1e-6, swirlerZ2 - swirlerZ0), 0, 1);
+      const xScale = 150;
+      let x = viewW / 2 + xScale * clamp(p.r, 0, 1) * Math.cos(p.theta);
+      let y = lerp(60, viewH - 40, tZ);
+
+      // emphasize the swirler interaction band
+      const inSwirler = p.z >= swirlerZ0 && p.z <= swirlerZ1;
+      const alpha = inSwirler ? 0.65 : 0.35;
+      const r = inSwirler ? 2.0 : 1.6;
+
+      const contact = swirlerContactRef.current.get(p);
+
+      if (contact) {
+        // stay attached once a fin is hit
+        const dz = Math.max(0, p.z - contact.zContact);
+        const ride = clamp(dz / Math.max(1e-6, swirlerZ2 - swirlerZ0), 0, 1);
+        const travel = lerp(8, 260, ride);
+        x = contact.xContact + travel * contact.tx;
+        y = contact.yContact + travel * contact.ty;
+      } else if (inSwirler) {
+        // first impact assignment
+        let best:
+          | {
+              segIndex: number;
+              x: number;
+              y: number;
+              d2: number;
+            }
+          | null = null;
+
+        for (let segIndex = 0; segIndex < swirlerFinSegments.length; segIndex++) {
+          const s = swirlerFinSegments[segIndex];
+          const cp = closestPointOnSegment(x, y, s);
+          const dx = x - cp.x;
+          const dy = y - cp.y;
+          const d2 = dx * dx + dy * dy;
+          if (best == null || d2 < best.d2) best = { segIndex, x: cp.x, y: cp.y, d2 };
+        }
+
+        if (best && best.d2 < 14 * 14) {
+          const s = swirlerFinSegments[best.segIndex];
+          const vx = s.x1 - s.x0;
+          const vy = s.y1 - s.y0;
+          const v = Math.max(1e-6, Math.hypot(vx, vy));
+          const tx = vx / v;
+          const ty = vy / v;
+          x = best.x;
+          y = best.y;
+          swirlerContactRef.current.set(p, {
+            segIndex: best.segIndex,
+            zContact: p.z,
+            xContact: x,
+            yContact: y,
+            tx,
+            ty,
+          });
+        }
+      }
+      return <circle key={i} cx={x} cy={y} r={r} fill="#6c757d" opacity={alpha} />;
+    });
+
+  const swirlerTopOuterR = topOuterR * 0.86; // close-up scale (~2x vs previous)
+  const swirlerTopDots = particles
+    .filter((p) => p.z >= swirlerZ1 && p.z <= swirlerZ2)
+    .map((p, i) => {
+      const effectiveR = swirlerTopOuterR * clamp(p.r, 0.12, 0.98);
       const x = tc.x + effectiveR * Math.cos(p.theta);
       const y = tc.y + effectiveR * Math.sin(p.theta);
       return <circle key={i} cx={x} cy={y} r={1.9} fill="#6c757d" opacity={0.55} />;
+    });
+
+  // Isometric-ish projection to relate side/top views (purely qualitative)
+  const swirlerIsoDots = particles
+    .filter((p) => p.z >= swirlerZ0 && p.z <= swirlerZ2)
+    .map((p, i) => {
+      const zt = clamp((p.z - swirlerZ0) / Math.max(1e-6, swirlerZ2 - swirlerZ0), 0, 1);
+      const rIso = swirlerTopOuterR * 0.75 * clamp(p.r, 0.12, 0.98);
+      const x = tc.x + rIso * Math.cos(p.theta) + (zt - 0.5) * 70;
+      const y = tc.y + rIso * Math.sin(p.theta) - (zt - 0.5) * 55;
+      const alpha = p.z <= swirlerZ1 ? 0.62 : 0.38;
+      return <circle key={i} cx={x} cy={y} r={1.8} fill="#6c757d" opacity={alpha} />;
     });
 
   return (
@@ -532,53 +686,55 @@ export function FlowTunnelAnimations(props: {
             </label>
           </div>
 
-          <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <label style={{ display: 'block', marginBottom: 0 }}>
-              <div style={{ fontSize: 13, color: '#495057', fontWeight: 500, marginBottom: 6 }}>Annular jet diameter</div>
-              <select
-                value={jetDiaClamped}
-                onChange={(e) => setJetDiaIn(Number(e.target.value))}
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  borderRadius: 8,
-                  border: '1px solid #dee2e6',
-                  fontSize: 14,
-                  backgroundColor: 'white',
-                  cursor: 'pointer',
-                }}
-              >
-                {[2, 3, 4, 5, 6, 7, 8, 9, 10].map((d) => (
-                  <option key={d} value={d}>
-                    {d}\" 
-                  </option>
-                ))}
-              </select>
-            </label>
+          {design.overlay === 'centerbody' && (
+            <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <label style={{ display: 'block', marginBottom: 0 }}>
+                <div style={{ fontSize: 13, color: '#495057', fontWeight: 500, marginBottom: 6 }}>Annular jet diameter</div>
+                <select
+                  value={jetDiaClamped}
+                  onChange={(e) => setJetDiaIn(Number(e.target.value))}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    borderRadius: 8,
+                    border: '1px solid #dee2e6',
+                    fontSize: 14,
+                    backgroundColor: 'white',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {[2, 3, 4, 5, 6, 7, 8, 9, 10].map((d) => (
+                    <option key={d} value={d}>
+                      {d}\" 
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-            <label style={{ display: 'block', marginBottom: 0 }}>
-              <div style={{ fontSize: 13, color: '#495057', fontWeight: 500, marginBottom: 6 }}>Jet start above inlet</div>
-              <select
-                value={jetStartClamped}
-                onChange={(e) => setJetStartIn(Number(e.target.value))}
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  borderRadius: 8,
-                  border: '1px solid #dee2e6',
-                  fontSize: 14,
-                  backgroundColor: 'white',
-                  cursor: 'pointer',
-                }}
-              >
-                {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((d) => (
-                  <option key={d} value={d}>
-                    {d}\" 
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
+              <label style={{ display: 'block', marginBottom: 0 }}>
+                <div style={{ fontSize: 13, color: '#495057', fontWeight: 500, marginBottom: 6 }}>Jet start above inlet</div>
+                <select
+                  value={jetStartClamped}
+                  onChange={(e) => setJetStartIn(Number(e.target.value))}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    borderRadius: 8,
+                    border: '1px solid #dee2e6',
+                    fontSize: 14,
+                    backgroundColor: 'white',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((d) => (
+                    <option key={d} value={d}>
+                      {d}\" 
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          )}
 
           <div style={{ marginTop: 6, fontSize: 12, color: '#6c757d', lineHeight: 1.4 }}>{design.description}</div>
         </div>
@@ -733,8 +889,8 @@ export function FlowTunnelAnimations(props: {
         }}
       >
         {windTunnelPanel({
-          title: 'Side ports (near-top outlets) — side view',
-          subtitleRight: `${sidePortCount} × ${sidePortDiaIn}\" ports assumed`,
+          title: 'Axial swirler — side cut (close-up)',
+          subtitleRight: 'particle path + forces (qualitative)',
           children: (
             <svg
               width={viewW}
@@ -747,56 +903,59 @@ export function FlowTunnelAnimations(props: {
               }}
             >
               <defs>
-                <linearGradient id="portJet" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="#6c757d" stopOpacity={0.28} />
-                  <stop offset="70%" stopColor="#6c757d" stopOpacity={0.1} />
-                  <stop offset="100%" stopColor="#6c757d" stopOpacity={0.0} />
-                </linearGradient>
-                <linearGradient id="portJetLeft" x1="100%" y1="0%" x2="0%" y2="0%">
-                  <stop offset="0%" stopColor="#6c757d" stopOpacity={0.28} />
-                  <stop offset="70%" stopColor="#6c757d" stopOpacity={0.1} />
-                  <stop offset="100%" stopColor="#6c757d" stopOpacity={0.0} />
-                </linearGradient>
+                <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#495057" opacity="0.7" />
+                </marker>
               </defs>
 
-              <path d={conePath} fill="#1a1a1a" opacity={0.08} stroke="#000" strokeWidth={2} />
+              {/* Zoom window */}
+              <rect x={12} y={40} width={viewW - 24} height={viewH - 60} rx={12} fill="#ffffff" stroke="#e9ecef" />
 
-              {sidePortsEnabled &&
-                [0.9, 0.93, 0.96, 0.99].map((t, i) => {
-                  const y = lerp(bottomY, topY, t);
-                  const rHere = frustumRadiusAtZ(inletR, outletR, t);
-                  const xR = cx + rHere * 0.92;
-                  const xL = cx - rHere * 0.92;
-                  const jetLen = 70;
-                  const jetHalf = Math.max(5, sidePortRPx * 0.9);
+              {/* A few fins (side cut): tilted plates the flow rides over */}
+              {[0, 1, 2].map((i) => {
+                const x0 = viewW / 2 - 70 + i * 70;
+                const y0 = 140;
+                const x1 = x0 + 46;
+                const y1 = y0 + 70;
+                return (
+                  <g key={i}>
+                    <path d={`M ${x0} ${y0} L ${x1} ${y1}`} stroke="#bdbdbd" strokeWidth={10} opacity={0.55} strokeLinecap="round" />
+                    <path d={`M ${x0} ${y0} L ${x1} ${y1}`} stroke="#000" strokeWidth={2} opacity={0.35} strokeLinecap="round" />
+                  </g>
+                );
+              })}
 
-                  return (
-                    <g key={i}>
-                      <circle cx={xR} cy={y} r={sidePortRPx} fill="#bdbdbd" opacity={0.55} stroke="#000" strokeWidth={1} />
-                      <circle cx={xL} cy={y + 4} r={sidePortRPx} fill="#bdbdbd" opacity={0.55} stroke="#000" strokeWidth={1} />
+              {/* Force vectors (qualitative) */}
+              <g opacity={0.9}>
+                <path d={`M ${viewW / 2} 98 L ${viewW / 2} 132`} stroke="#495057" strokeWidth={2.2} markerEnd="url(#arrow)" />
+                <text x={viewW / 2 + 8} y={110} fontSize={11} fill="#495057">
+                  axial push
+                </text>
 
-                      <polygon points={`${xR},${y} ${xR + jetLen},${y - jetHalf} ${xR + jetLen},${y + jetHalf}`} fill="url(#portJet)" opacity={0.9} />
-                      <polygon
-                        points={`${xL},${y + 4} ${xL - jetLen},${y + 4 - jetHalf} ${xL - jetLen},${y + 4 + jetHalf}`}
-                        fill="url(#portJetLeft)"
-                        opacity={0.9}
-                      />
-                    </g>
-                  );
-                })}
+                <path d={`M ${viewW / 2 - 8} 178 L ${viewW / 2 + 48} 158`} stroke="#495057" strokeWidth={2.2} markerEnd="url(#arrow)" />
+                <text x={viewW / 2 + 54} y={164} fontSize={11} fill="#495057">
+                  turning → swirl
+                </text>
 
-              {sideDots}
+                <path d={`M ${viewW / 2 + 30} 208 L ${viewW / 2 + 2} 236`} stroke="#495057" strokeWidth={2.2} markerEnd="url(#arrow)" opacity={0.65} />
+                <text x={viewW / 2 + 34} y={238} fontSize={11} fill="#495057" opacity={0.85}>
+                  drag/loss
+                </text>
+              </g>
+
+              {/* Particles through the close-up region */}
+              {swirlerSideDots}
 
               <text x={16} y={24} fontSize={11} fill="#495057">
-                Concept: exhaust vents sideways through ports near the top.
+                Particles ride over pitched fins; the fin reaction force adds tangential momentum (swirl).
               </text>
             </svg>
           ),
         })}
 
         {windTunnelPanel({
-          title: 'Side ports — top view',
-          subtitleRight: 'slice near top; jet/port size to-scale',
+          title: 'Axial swirler — top view (close-up)',
+          subtitleRight: '3 fins; induced tangential motion',
           children: (
             <svg
               width={w}
@@ -808,33 +967,298 @@ export function FlowTunnelAnimations(props: {
                 background: 'linear-gradient(to bottom, #fafbfc 0%, #ffffff 100%)',
               }}
             >
-              <circle cx={tc.x} cy={tc.y} r={topOuterR} fill="#151515" opacity={0.025} stroke="#000" strokeWidth={1.6} />
-              <circle cx={tc.x} cy={tc.y} r={topInnerR} fill="#000" opacity={0.02} stroke="#000" strokeWidth={1.2} />
+              <defs>
+                <marker id="arrowTop" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#495057" opacity="0.7" />
+                </marker>
+              </defs>
 
-              <circle cx={tc.x} cy={tc.y} r={sidePortsSliceR} fill="#151515" opacity={0.06} stroke="#000" strokeWidth={2} />
-              <circle cx={tc.x} cy={tc.y} r={sidePortsSliceR * 0.62} fill="#000" opacity={0.03} stroke="#000" strokeWidth={1.6} />
+              <circle cx={tc.x} cy={tc.y} r={swirlerTopOuterR} fill="#151515" opacity={0.03} stroke="#000" strokeWidth={1.6} />
+              <circle cx={tc.x} cy={tc.y} r={topOuterR * 0.12} fill="#2f2f2f" opacity={0.55} stroke="#000" strokeWidth={1.6} />
 
-              {[...Array(sidePortCount)].map((_, i) => {
-                const a = (i / sidePortCount) * Math.PI * 2;
-                const rp = sidePortsSliceR * 0.9;
-                const x = tc.x + rp * Math.cos(a);
-                const y = tc.y + rp * Math.sin(a);
-                const jetLen = Math.max(18, sidePortDiaPx * 2.1);
-                const rJet = rp + jetLen;
-                const x2 = tc.x + rJet * Math.cos(a);
-                const y2 = tc.y + rJet * Math.sin(a);
-                const jetStroke = clamp(sidePortDiaPx * 0.9, 4, 14);
+              {/* Three fins (plan view): pitched vanes to add tangential velocity */}
+              {[0, 1, 2].map((i) => {
+                const a = (i / 3) * Math.PI * 2;
+                const r1 = swirlerTopOuterR * 0.22;
+                const r2 = swirlerTopOuterR * 0.92;
+                const pitch = 0.62; // radians: visual pitch (not a claim about the real design)
+                const chord = 0.22; // angular chord thickness
                 return (
                   <g key={i}>
-                    <path d={`M ${x} ${y} L ${x2} ${y2}`} stroke="#6c757d" strokeWidth={jetStroke} opacity={0.16} strokeLinecap="round" />
-                    <circle cx={x} cy={y} r={sidePortRPx} fill="#bdbdbd" opacity={0.55} stroke="#000" strokeWidth={1} />
+                    <path
+                      d={`M ${tc.x} ${tc.y} L ${tc.x + r2 * Math.cos(a)} ${tc.y + r2 * Math.sin(a)}`}
+                      stroke="#adb5bd"
+                      strokeWidth={2}
+                      opacity={0.22}
+                      strokeDasharray="4 6"
+                    />
+                    {drawVanePlate({
+                      cx: tc.x,
+                      cy: tc.y,
+                      rInner: r1,
+                      rOuter: r2,
+                      a0: a + pitch - chord * 0.5,
+                      a1: a + pitch + chord * 0.5,
+                      fill: '#bdbdbd',
+                      fillOpacity: 0.52,
+                      stroke: '#000',
+                      strokeOpacity: 0.32,
+                      strokeWidth: 1.4,
+                    })}
+                    {/* trailing edge hint */}
+                    <path
+                      d={`M ${tc.x + r1 * Math.cos(a + pitch + chord * 0.5)} ${tc.y + r1 * Math.sin(a + pitch + chord * 0.5)} L ${tc.x + r2 * Math.cos(a + pitch + chord * 0.5)} ${tc.y + r2 * Math.sin(a + pitch + chord * 0.5)}`}
+                      stroke="#000"
+                      strokeWidth={1.2}
+                      opacity={0.18}
+                    />
                   </g>
                 );
               })}
 
-              {sidePortsTopDots}
+              {/* Tangential force cue */}
+              <path
+                d={`M ${tc.x + swirlerTopOuterR * 0.10} ${tc.y - swirlerTopOuterR * 0.68} A ${swirlerTopOuterR * 0.68} ${swirlerTopOuterR * 0.68} 0 0 1 ${tc.x + swirlerTopOuterR * 0.68} ${tc.y - swirlerTopOuterR * 0.10}`}
+                fill="none"
+                stroke="#495057"
+                strokeWidth={2}
+                opacity={0.65}
+                markerEnd="url(#arrowTop)"
+              />
+              <text x={tc.x + swirlerTopOuterR * 0.28} y={tc.y - swirlerTopOuterR * 0.78} fontSize={11} fill="#495057" opacity={0.9}>
+                tangential impulse
+              </text>
+
+              {swirlerTopDots}
               <text x={16} y={24} fontSize={11} fill="#495057">
-                With enough port area, a smaller top outlet can still vent flow.
+                If the fins are straight (no pitch), they won’t add swirl — the pitch is what creates tangential momentum.
+              </text>
+            </svg>
+          ),
+        })}
+      </div>
+
+      <div
+        style={{
+          marginTop: 14,
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))',
+          gap: 14,
+          alignItems: 'start',
+        }}
+      >
+        {windTunnelPanel({
+          title: 'Axial swirler — isometric (close-up)',
+          subtitleRight: 'same fins; projected in 3D',
+          children: (
+            <svg
+              width={w}
+              height={h}
+              viewBox={`0 0 ${w} ${h}`}
+              style={{
+                border: '1px solid #e9ecef',
+                borderRadius: 12,
+                background: 'linear-gradient(to bottom, #fafbfc 0%, #ffffff 100%)',
+              }}
+            >
+              <defs>
+                <marker id="arrowIso" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#495057" opacity="0.7" />
+                </marker>
+              </defs>
+
+              {(() => {
+                // simple isometric projection
+                const iso = {
+                  ox: tc.x,
+                  oy: tc.y + 10,
+                  sx: 1.0,
+                  sy: 0.62,
+                  zx: 78,
+                  zy: 64,
+                };
+
+                const proj = (r: number, theta: number, z: number) => {
+                  const x = iso.ox + iso.sx * r * Math.cos(theta) + (z - 0.5) * iso.zx;
+                  const y = iso.oy + iso.sy * r * Math.sin(theta) - (z - 0.5) * iso.zy;
+                  return { x, y };
+                };
+
+                const rTube = swirlerTopOuterR * 0.82;
+                const zBottom = 0.10;
+                const zTop = 0.90;
+
+                // tube rings
+                const ring = (z: number, opacity: number, strokeOpacity: number) => {
+                  const c = proj(0, 0, z);
+                  return (
+                    <ellipse
+                      cx={c.x}
+                      cy={c.y}
+                      rx={rTube}
+                      ry={rTube * iso.sy}
+                      fill="#151515"
+                      opacity={opacity}
+                      stroke="#000"
+                      strokeWidth={1.4}
+                      strokeOpacity={strokeOpacity}
+                    />
+                  );
+                };
+
+                const vanes = [0, 1, 2].map((i) => {
+                  const a = (i / 3) * Math.PI * 2;
+                  const pitch = 0.62;
+                  const chord = 0.22;
+                  const r1 = rTube * 0.30;
+                  const r2 = rTube * 0.92;
+                  const zV = 0.55;
+
+                  // two edges of vane sector, projected at a fixed z
+                  const p0o = proj(r2, a + pitch - chord * 0.5, zV);
+                  const p1o = proj(r2, a + pitch + chord * 0.5, zV);
+                  const p1i = proj(r1, a + pitch + chord * 0.5, zV);
+                  const p0i = proj(r1, a + pitch - chord * 0.5, zV);
+
+                  return (
+                    <g key={i}>
+                      <path
+                        d={`M ${p0o.x} ${p0o.y} L ${p1o.x} ${p1o.y} L ${p1i.x} ${p1i.y} L ${p0i.x} ${p0i.y} Z`}
+                        fill="#bdbdbd"
+                        opacity={0.52}
+                        stroke="#000"
+                        strokeWidth={1.2}
+                        strokeOpacity={0.28}
+                      />
+                    </g>
+                  );
+                });
+
+                const dots = particles
+                  .filter((p) => p.z >= swirlerZ0 && p.z <= swirlerZ2)
+                  .map((p, i) => {
+                    const rIso = rTube * clamp(p.r, 0.12, 0.98);
+                    const z = clamp((p.z - swirlerZ0) / Math.max(1e-6, swirlerZ2 - swirlerZ0), 0, 1);
+                    const pt = proj(rIso, p.theta, lerp(zBottom, zTop, z));
+                    const alpha = p.z <= swirlerZ1 ? 0.62 : 0.38;
+                    return <circle key={i} cx={pt.x} cy={pt.y} r={1.8} fill="#6c757d" opacity={alpha} />;
+                  });
+
+                const pAx0 = proj(rTube * 1.05, Math.PI * 0.92, zBottom);
+                const pAx1 = proj(rTube * 1.05, Math.PI * 0.92, zTop);
+
+                return (
+                  <>
+                    {ring(zTop, 0.02, 0.18)}
+                    {ring(zBottom, 0.03, 0.24)}
+                    <path
+                      d={`M ${proj(rTube, Math.PI * 0.15, zBottom).x} ${proj(rTube, Math.PI * 0.15, zBottom).y} L ${proj(rTube, Math.PI * 0.15, zTop).x} ${proj(rTube, Math.PI * 0.15, zTop).y}`}
+                      stroke="#000"
+                      strokeWidth={1.2}
+                      opacity={0.16}
+                    />
+                    <path
+                      d={`M ${proj(rTube, Math.PI * 1.15, zBottom).x} ${proj(rTube, Math.PI * 1.15, zBottom).y} L ${proj(rTube, Math.PI * 1.15, zTop).x} ${proj(rTube, Math.PI * 1.15, zTop).y}`}
+                      stroke="#000"
+                      strokeWidth={1.2}
+                      opacity={0.16}
+                    />
+
+                    {vanes}
+                    {dots}
+
+                    <path d={`M ${pAx0.x} ${pAx0.y} L ${pAx1.x} ${pAx1.y}`} stroke="#495057" strokeWidth={2} opacity={0.55} markerEnd="url(#arrowIso)" />
+                    <text x={pAx0.x - 22} y={pAx0.y + 14} fontSize={11} fill="#495057" opacity={0.85}>
+                      axial
+                    </text>
+
+                    <path
+                      d={`M ${proj(rTube * 0.2, -0.2, 0.6).x} ${proj(rTube * 0.2, -0.2, 0.6).y} A 70 45 0 0 1 ${proj(rTube * 0.2, 1.2, 0.6).x} ${proj(rTube * 0.2, 1.2, 0.6).y}`}
+                      fill="none"
+                      stroke="#495057"
+                      strokeWidth={2}
+                      opacity={0.55}
+                      markerEnd="url(#arrowIso)"
+                    />
+                    <text x={tc.x + 70} y={tc.y - 36} fontSize={11} fill="#495057" opacity={0.85}>
+                      swirl
+                    </text>
+                  </>
+                );
+              })()}
+
+              <text x={16} y={24} fontSize={11} fill="#495057">
+                Same pitched vanes; this just projects radius + height into one view.
+              </text>
+            </svg>
+          ),
+        })}
+
+        {windTunnelPanel({
+          title: 'Axial swirler — bottom view (close-up)',
+          subtitleRight: 'looking up into the vanes',
+          children: (
+            <svg
+              width={w}
+              height={h}
+              viewBox={`0 0 ${w} ${h}`}
+              style={{
+                border: '1px solid #e9ecef',
+                borderRadius: 12,
+                background: 'linear-gradient(to bottom, #fafbfc 0%, #ffffff 100%)',
+              }}
+            >
+              <defs>
+                <marker id="arrowBot" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#495057" opacity="0.7" />
+                </marker>
+              </defs>
+
+              <circle cx={tc.x} cy={tc.y} r={swirlerTopOuterR} fill="#151515" opacity={0.03} stroke="#000" strokeWidth={1.6} />
+              <circle cx={tc.x} cy={tc.y} r={topOuterR * 0.12} fill="#2f2f2f" opacity={0.55} stroke="#000" strokeWidth={1.6} />
+
+              {[0, 1, 2].map((i) => {
+                const a = (i / 3) * Math.PI * 2;
+                const r1 = swirlerTopOuterR * 0.22;
+                const r2 = swirlerTopOuterR * 0.92;
+                const pitch = -0.62; // mirrored when looking from bottom
+                const chord = 0.22;
+                return (
+                  <g key={i}>
+                    {drawVanePlate({
+                      cx: tc.x,
+                      cy: tc.y,
+                      rInner: r1,
+                      rOuter: r2,
+                      a0: a + pitch - chord * 0.5,
+                      a1: a + pitch + chord * 0.5,
+                      fill: '#bdbdbd',
+                      fillOpacity: 0.52,
+                      stroke: '#000',
+                      strokeOpacity: 0.32,
+                      strokeWidth: 1.4,
+                    })}
+                  </g>
+                );
+              })}
+
+              <path
+                d={`M ${tc.x - swirlerTopOuterR * 0.2} ${tc.y + swirlerTopOuterR * 0.72} A ${swirlerTopOuterR * 0.72} ${swirlerTopOuterR * 0.72} 0 0 0 ${tc.x - swirlerTopOuterR * 0.72} ${tc.y + swirlerTopOuterR * 0.2}`}
+                fill="none"
+                stroke="#495057"
+                strokeWidth={2}
+                opacity={0.55}
+                markerEnd="url(#arrowBot)"
+              />
+              <text x={tc.x - swirlerTopOuterR * 0.68} y={tc.y + swirlerTopOuterR * 0.84} fontSize={11} fill="#495057" opacity={0.85}>
+                swirl
+              </text>
+
+              {/* reuse the same particle slice as top view */}
+              {swirlerTopDots}
+
+              <text x={16} y={24} fontSize={11} fill="#495057">
+                Bottom view is the same vanes, mirrored as if you’re looking up into the emitter.
               </text>
             </svg>
           ),
