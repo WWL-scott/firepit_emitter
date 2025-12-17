@@ -30,6 +30,7 @@ type Particle = {
   z: number; // normalized height, inlet plane at z=0, outlet at z=1
   r: number; // normalized radius (0=center, 1=wall at that z)
   theta: number; // radians
+  theta0: number; // initial theta (used for view-specific projections)
   seed: number;
 };
 
@@ -154,11 +155,13 @@ function createParticle(seed: number): Particle {
   const u = a / 233280;
   const v = b / 9301;
 
+  const theta = (u * 2 * Math.PI + v * 0.6) % (2 * Math.PI);
   return {
     // start below the inlet so the user can see approach
     z: -0.28 - 0.45 * u,
     r: clamp(0.12 + 0.78 * v, 0.06, 0.94),
-    theta: (u * 2 * Math.PI + v * 0.6) % (2 * Math.PI),
+    theta,
+    theta0: theta,
     seed,
   };
 }
@@ -196,6 +199,7 @@ function stepParticle(p: Particle, dt: number, design: SwirlDesign) {
     p.z = next.z;
     p.r = next.r;
     p.theta = next.theta;
+    p.theta0 = next.theta0;
     p.seed = next.seed;
   }
 }
@@ -467,7 +471,9 @@ export function FlowTunnelAnimations(props: {
     const outsideExpand = z < 0 ? 1.1 : 1.0;
 
     const rPx = p.r * rWall * outsideExpand;
-    const x = cx + rPx * Math.cos(p.theta);
+    // Side view only: use the tangential (sin) component so the perceived
+    // spin direction matches the top/isometric views.
+    const x = cx + rPx * Math.sin(p.theta);
 
     // Fade particles as energy transfers to the wall (qualitative): more transfer as z increases.
     const transferAtZ = inEmitter ? heatToWallFrac * smoothstep(0.02, 1.0, clamp(z, 0, 1)) : 0;
@@ -739,6 +745,81 @@ export function FlowTunnelAnimations(props: {
           )}
 
           <div style={{ marginTop: 6, fontSize: 12, color: '#6c757d', lineHeight: 1.4 }}>{design.description}</div>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 14, background: '#f8f9fa', border: '1px solid #e9ecef', borderRadius: 12, padding: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
+          <div style={{ background: 'white', border: '1px solid #e9ecef', borderRadius: 10, padding: 12 }}>
+            <div style={{ fontSize: 12, color: '#6c757d', marginBottom: 6 }}>Energy split (captured plume)</div>
+            <div style={{ fontSize: 13, color: '#212529', lineHeight: 1.6 }}>
+              <div>
+                <strong>Outlet exhaust heat:</strong> <strong>{outletExhaustW.toFixed(0)} W</strong>
+              </div>
+              <div>
+                <strong>Heat to wall:</strong> {wallCapturedW.toFixed(0)} W ({(heatToWallFrac * 100).toFixed(1)}%)
+              </div>
+              <div>
+                <strong>Radiant out:</strong> {radiantOutW.toFixed(0)} W
+              </div>
+              <div style={{ marginTop: 6, fontSize: 12, color: '#6c757d' }}>
+                Restriction (outlet-only): ×{restrictionIndexOutletOnly.toFixed(2)}; backpressure risk: <strong>{backpressureFlag}</strong>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 10 }}>
+              <div style={{ height: 12, borderRadius: 999, overflow: 'hidden', border: '1px solid #dee2e6', display: 'flex' }}>
+                <div style={{ width: `${clamp(heatToWallFrac, 0, 1) * 100}%`, background: '#667eea', opacity: 0.55 }} />
+                <div style={{ flex: 1, background: '#adb5bd', opacity: 0.45 }} />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#6c757d', marginTop: 6 }}>
+                <span>to wall</span>
+                <span>exits outlet</span>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ background: 'white', border: '1px solid #e9ecef', borderRadius: 10, padding: 12 }}>
+            <div style={{ fontSize: 12, color: '#6c757d', marginBottom: 6 }}>Real numbers (current selection)</div>
+            <div style={{ fontSize: 13, color: '#212529', lineHeight: 1.6 }}>
+              <div>Burner power: {results.burnerPowerW.toFixed(0)} W</div>
+              <div>Plume power: {results.plumePowerW.toFixed(0)} W</div>
+              <div>Captured plume: {capturedPlumeW.toFixed(0)} W</div>
+              <div>Bypass (effective): {(bypassEff * 100).toFixed(1)}%</div>
+              <div>Processed plume: {capEffW.toFixed(0)} W</div>
+              <div>UA (effective): {uaEff.toFixed(1)} W/K</div>
+              <div>Effectiveness ε: {eps.toFixed(3)}</div>
+            </div>
+          </div>
+
+          <div style={{ background: 'white', border: '1px solid #e9ecef', borderRadius: 10, padding: 12 }}>
+            <div style={{ fontSize: 12, color: '#6c757d', marginBottom: 6 }}>Assumptions & formulas (used here)</div>
+            <div style={{ fontSize: 12, color: '#212529', lineHeight: 1.55 }}>
+              <div style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                P_burner[W] = BTU/h × 0.293071
+                <br />
+                P_plume = P_burner × f_conv
+                <br />
+                P_captured = P_plume × f_capture × (1 - f_wind)
+                <br />
+                bypassEff = clamp(f_bypass × (D/4)^0.8, 0, 0.95)
+                <br />
+                UA_eff = UA × (4/D)^0.35 × uaMult
+                <br />
+                C_eff = C × cMult
+                <br />
+                ε = 1 - exp(-UA_eff / C_eff)
+                <br />
+                Q_wall = P_captured × (1 - bypassEff) × ε
+                <br />
+                <strong>Q_outlet = P_captured - Q_wall</strong>
+              </div>
+              <div style={{ marginTop: 8, color: '#6c757d' }}>
+                Note: This animation is qualitative; numbers come from the same simplified thermal model used elsewhere in the app.
+                Restriction/backpressure is shown as a relative index based on open vent area (not a CFD pressure prediction).
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1408,81 +1489,6 @@ export function FlowTunnelAnimations(props: {
           </div>
         </>
       ) : null}
-
-      <div style={{ marginTop: 14, background: '#f8f9fa', border: '1px solid #e9ecef', borderRadius: 12, padding: 14 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
-          <div style={{ background: 'white', border: '1px solid #e9ecef', borderRadius: 10, padding: 12 }}>
-            <div style={{ fontSize: 12, color: '#6c757d', marginBottom: 6 }}>Energy split (captured plume)</div>
-            <div style={{ fontSize: 13, color: '#212529', lineHeight: 1.6 }}>
-              <div>
-                <strong>Outlet exhaust heat:</strong> <strong>{outletExhaustW.toFixed(0)} W</strong>
-              </div>
-              <div>
-                <strong>Heat to wall:</strong> {wallCapturedW.toFixed(0)} W ({(heatToWallFrac * 100).toFixed(1)}%)
-              </div>
-              <div>
-                <strong>Radiant out:</strong> {radiantOutW.toFixed(0)} W
-              </div>
-              <div style={{ marginTop: 6, fontSize: 12, color: '#6c757d' }}>
-                Restriction (outlet-only): ×{restrictionIndexOutletOnly.toFixed(2)}; backpressure risk: <strong>{backpressureFlag}</strong>
-              </div>
-            </div>
-
-            <div style={{ marginTop: 10 }}>
-              <div style={{ height: 12, borderRadius: 999, overflow: 'hidden', border: '1px solid #dee2e6', display: 'flex' }}>
-                <div style={{ width: `${clamp(heatToWallFrac, 0, 1) * 100}%`, background: '#667eea', opacity: 0.55 }} />
-                <div style={{ flex: 1, background: '#adb5bd', opacity: 0.45 }} />
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#6c757d', marginTop: 6 }}>
-                <span>to wall</span>
-                <span>exits outlet</span>
-              </div>
-            </div>
-          </div>
-
-          <div style={{ background: 'white', border: '1px solid #e9ecef', borderRadius: 10, padding: 12 }}>
-            <div style={{ fontSize: 12, color: '#6c757d', marginBottom: 6 }}>Real numbers (current selection)</div>
-            <div style={{ fontSize: 13, color: '#212529', lineHeight: 1.6 }}>
-              <div>Burner power: {results.burnerPowerW.toFixed(0)} W</div>
-              <div>Plume power: {results.plumePowerW.toFixed(0)} W</div>
-              <div>Captured plume: {capturedPlumeW.toFixed(0)} W</div>
-              <div>Bypass (effective): {(bypassEff * 100).toFixed(1)}%</div>
-              <div>Processed plume: {capEffW.toFixed(0)} W</div>
-              <div>UA (effective): {uaEff.toFixed(1)} W/K</div>
-              <div>Effectiveness ε: {eps.toFixed(3)}</div>
-            </div>
-          </div>
-
-          <div style={{ background: 'white', border: '1px solid #e9ecef', borderRadius: 10, padding: 12 }}>
-            <div style={{ fontSize: 12, color: '#6c757d', marginBottom: 6 }}>Assumptions & formulas (used here)</div>
-            <div style={{ fontSize: 12, color: '#212529', lineHeight: 1.55 }}>
-              <div style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-                P_burner[W] = BTU/h × 0.293071
-                <br />
-                P_plume = P_burner × f_conv
-                <br />
-                P_captured = P_plume × f_capture × (1 - f_wind)
-                <br />
-                bypassEff = clamp(f_bypass × (D/4)^0.8, 0, 0.95)
-                <br />
-                UA_eff = UA × (4/D)^0.35 × uaMult
-                <br />
-                C_eff = C × cMult
-                <br />
-                ε = 1 - exp(-UA_eff / C_eff)
-                <br />
-                Q_wall = P_captured × (1 - bypassEff) × ε
-                <br />
-                <strong>Q_outlet = P_captured - Q_wall</strong>
-              </div>
-              <div style={{ marginTop: 8, color: '#6c757d' }}>
-                Note: This animation is qualitative; numbers come from the same simplified thermal model used elsewhere in the app.
-                Restriction/backpressure is shown as a relative index based on open vent area (not a CFD pressure prediction).
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
