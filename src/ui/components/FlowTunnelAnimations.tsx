@@ -15,6 +15,17 @@ function smoothstep(edge0: number, edge1: number, x: number) {
   return t * t * (3 - 2 * t);
 }
 
+// Axial-swirler fin setting (chosen to limit turning loss / backpressure)
+// Interpreted as degrees from the axial direction (vertical in the side-cut).
+const SWIRLER_FIN_ANGLE_FROM_AXIAL_DEG = 35;
+const SWIRLER_FIN_ANGLE_REF_DEG = 40; // prior visual baseline for scaling
+const SWIRLER_FIN_ANGLE_RAD = (SWIRLER_FIN_ANGLE_FROM_AXIAL_DEG * Math.PI) / 180;
+const SWIRLER_FIN_ANGLE_REF_RAD = (SWIRLER_FIN_ANGLE_REF_DEG * Math.PI) / 180;
+const SWIRLER_OMEGA_SCALE = Math.sin(SWIRLER_FIN_ANGLE_RAD) / Math.max(1e-6, Math.sin(SWIRLER_FIN_ANGLE_REF_RAD));
+const SWIRLER_LOSS_SCALE =
+  (Math.sin(SWIRLER_FIN_ANGLE_RAD) * Math.sin(SWIRLER_FIN_ANGLE_RAD)) /
+  Math.max(1e-6, Math.sin(SWIRLER_FIN_ANGLE_REF_RAD) * Math.sin(SWIRLER_FIN_ANGLE_REF_RAD));
+
 type Particle = {
   z: number; // normalized height, inlet plane at z=0, outlet at z=1
   r: number; // normalized radius (0=center, 1=wall at that z)
@@ -22,7 +33,7 @@ type Particle = {
   seed: number;
 };
 
-type SwirlDesignId =
+export type SwirlDesignId =
   | 'none'
   | 'outerStator'
   | 'fullStator'
@@ -53,7 +64,7 @@ type SwirlDesign = {
   overlay: 'none' | 'statorOuter' | 'statorFull' | 'fins' | 'propeller' | 'centerbody';
 };
 
-const DESIGNS: SwirlDesign[] = [
+export const SWIRL_DESIGNS: SwirlDesign[] = [
   {
     id: 'none',
     name: 'No swirl hardware (baseline)',
@@ -110,26 +121,27 @@ const DESIGNS: SwirlDesign[] = [
     id: 'propeller',
     name: 'Propeller-style blades (axial swirler)',
     description: 'Fixed blades create swirl through the whole section but at higher turning loss.',
-    uaMult: 1.05,
-    cMult: 0.86,
-    omega: (z) => 4.8 * (1 - 0.25 * z),
+    uaMult: 0.98 + 0.07 * SWIRLER_LOSS_SCALE,
+    cMult: 0.92 - 0.06 * SWIRLER_LOSS_SCALE,
+    omega: (z) => 4.8 * (1 - 0.25 * z) * SWIRLER_OMEGA_SCALE,
     omegaByRadius: () => 0.95,
     rTarget: () => 0.84,
     attach: (z) => 1.15 + 0.20 * (1 - z),
-    vzScale: 0.78,
+    // less blade angle => less turning loss => less draft penalty
+    vzScale: 0.90 - 0.12 * SWIRLER_LOSS_SCALE,
     overlay: 'propeller',
   },
   {
     id: 'centerbody',
     name: 'Centerbody + blades (annular jet + swirl)',
     description: 'A center cone forces annular flow; blades add swirl; tends to push gas hard into the wall.',
-    uaMult: 1.20,
-    cMult: 0.88,
-    omega: (z) => 5.2 * Math.exp(-z / 0.70),
+    uaMult: 1.12 + 0.08 * SWIRLER_LOSS_SCALE,
+    cMult: 0.92 - 0.04 * SWIRLER_LOSS_SCALE,
+    omega: (z) => 5.2 * Math.exp(-z / 0.70) * SWIRLER_OMEGA_SCALE,
     omegaByRadius: () => 1.0,
     rTarget: () => 0.92,
     attach: (z) => 1.45 + 0.30 * (1 - z),
-    vzScale: 0.80,
+    vzScale: 0.86 - 0.06 * SWIRLER_LOSS_SCALE,
     rMin: (z) => lerp(0.30, 0.20, clamp(z / 0.35, 0, 1)),
     overlay: 'centerbody',
   },
@@ -323,7 +335,7 @@ export function FlowTunnelAnimations(props: {
   const [outletSelIn, setOutletSelIn] = useState<number>(() => clamp(props.config.outletDiameterIn ?? 3, 2, 5));
   const [jetDiaIn, setJetDiaIn] = useState<number>(6);
   const [jetStartIn, setJetStartIn] = useState<number>(1);
-  const design = useMemo(() => DESIGNS.find((d) => d.id === designId) ?? DESIGNS[0], [designId]);
+  const design = useMemo(() => SWIRL_DESIGNS.find((d) => d.id === designId) ?? SWIRL_DESIGNS[0], [designId]);
 
   const pxPerIn = 10;
   const inletR = (props.config.inletDiameterIn / 2) * pxPerIn;
@@ -339,6 +351,7 @@ export function FlowTunnelAnimations(props: {
 
   const particlesRef = useRef<Particle[]>([]);
   const lastTRef = useRef<number | null>(null);
+  const tRef = useRef(0);
   const swirlerContactRef = useRef(
     new WeakMap<
       Particle,
@@ -380,11 +393,13 @@ export function FlowTunnelAnimations(props: {
   useEffect(() => {
     let raf = 0;
     lastTRef.current = null;
+    tRef.current = 0;
 
     const tick = (tMs: number) => {
       if (lastTRef.current == null) lastTRef.current = tMs;
       const dt = clamp((tMs - lastTRef.current) / 1000, 0, 0.05);
       lastTRef.current = tMs;
+      tRef.current += dt;
 
       // If we're in centerbody mode, enforce annular blocking via rMinFromJet.
       const activeDesign: SwirlDesign = design.overlay === 'centerbody' ? { ...design, rMin: rMinFromJet } : design;
@@ -432,15 +447,6 @@ export function FlowTunnelAnimations(props: {
   const outletArea = circleArea(outletSelIn);
   const outletAreaRef = circleArea(3);
   const restrictionIndexOutletOnly = outletArea > 0 ? clamp(outletAreaRef / outletArea, 0.25, 10) : 10;
-
-  // Side ports configuration (for the "outward outlet ports" animation row)
-  const sidePortsEnabled = true;
-  const sidePortCount = 10;
-  const sidePortDiaIn = 1; // assumption for visualization + numbers
-  const sidePortsArea = sidePortCount * circleArea(sidePortDiaIn);
-  // Effective vent area = top outlet + ports. (Real flow depends on losses and jetting; this is just a first-order proxy.)
-  const effectiveVentArea = outletArea + sidePortsArea;
-  const restrictionIndexWithPorts = effectiveVentArea > 0 ? clamp(outletAreaRef / effectiveVentArea, 0.1, 10) : 10;
 
   const backpressureFlag = outletSelIn <= 2 ? 'High risk' : outletSelIn <= 2.5 ? 'Moderate risk' : 'Lower risk';
 
@@ -509,11 +515,15 @@ export function FlowTunnelAnimations(props: {
   // Side-cut fin segments for close-up (in panel pixel coordinates)
   const swirlerFinSegments = useMemo(() => {
     const segs: Array<{ x0: number; y0: number; x1: number; y1: number }> = [];
+    const finAngleFromVerticalDeg = SWIRLER_FIN_ANGLE_FROM_AXIAL_DEG;
+    const finDy = 92;
+    const finAngleFromHorizontalDeg = 90 - finAngleFromVerticalDeg;
+    const finDx = finDy / Math.max(1e-6, Math.tan((finAngleFromHorizontalDeg * Math.PI) / 180));
     for (let i = 0; i < 3; i++) {
       const x0 = viewW / 2 - 70 + i * 70;
-      const y0 = 140;
-      const x1 = x0 + 46;
-      const y1 = y0 + 70;
+      const y0 = viewH / 2 + 40;
+      const x1 = x0 + finDx;
+      const y1 = y0 - finDy;
       segs.push({ x0, y0, x1, y1 });
     }
     return segs;
@@ -533,66 +543,58 @@ export function FlowTunnelAnimations(props: {
 
   // IMPORTANT: compute every render (particles mutate in-place), so close-up dots animate.
   const swirlerSideDots = particles
-    .filter((p) => p.z >= swirlerZ0 && p.z <= swirlerZ2)
+    .filter((p) => p.z >= -0.8 && p.z <= swirlerZ2)
     .map((p, i) => {
-      const tZ = clamp((p.z - swirlerZ0) / Math.max(1e-6, swirlerZ2 - swirlerZ0), 0, 1);
-      const xScale = 150;
-      let x = viewW / 2 + xScale * clamp(p.r, 0, 1) * Math.cos(p.theta);
-      let y = lerp(60, viewH - 40, tZ);
+      // Render-only streamline: constant-speed and simple geometry.
+      // Straight up from the bottom flume to the fins, then continues along the fin-set angle.
+      const mid = swirlerFinSegments[1];
+      const vx = mid.x1 - mid.x0;
+      const vy = mid.y1 - mid.y0;
+      const v = Math.max(1e-6, Math.hypot(vx, vy));
+      const tx = vx / v;
+      const ty = vy / v;
 
-      // emphasize the swirler interaction band
-      const inSwirler = p.z >= swirlerZ0 && p.z <= swirlerZ1;
-      const alpha = inSwirler ? 0.65 : 0.35;
-      const r = inSwirler ? 2.0 : 1.6;
+      const fin0 = swirlerFinSegments[0];
+      const fin2 = swirlerFinSegments[2];
+      const xLeft = fin0.x0;
+      const xRight = fin2.x1;
+      const width = Math.max(1e-6, xRight - xLeft);
 
-      const contact = swirlerContactRef.current.get(p);
+      // Even spacing across the fin span (no "missing gap")
+      const cols = 18;
+      const col = p.seed % cols;
+      const jitter = (Math.sin(p.seed * 12.9898) * 43758.5453) % 1;
+      const xBase = xLeft + ((col + 0.5) / cols) * width + (jitter - 0.5) * 2.5;
 
-      if (contact) {
-        // stay attached once a fin is hit
-        const dz = Math.max(0, p.z - contact.zContact);
-        const ride = clamp(dz / Math.max(1e-6, swirlerZ2 - swirlerZ0), 0, 1);
-        const travel = lerp(8, 260, ride);
-        x = contact.xContact + travel * contact.tx;
-        y = contact.yContact + travel * contact.ty;
-      } else if (inSwirler) {
-        // first impact assignment
-        let best:
-          | {
-              segIndex: number;
-              x: number;
-              y: number;
-              d2: number;
-            }
-          | null = null;
+      const yBottom = viewH - 22;
+      const yHit = swirlerFinSegments[1].y0 + 18;
+      const L1 = Math.max(1e-6, yBottom - yHit);
+      const L2 = 280;
+      const L = L1 + L2;
 
-        for (let segIndex = 0; segIndex < swirlerFinSegments.length; segIndex++) {
-          const s = swirlerFinSegments[segIndex];
-          const cp = closestPointOnSegment(x, y, s);
-          const dx = x - cp.x;
-          const dy = y - cp.y;
-          const d2 = dx * dx + dy * dy;
-          if (best == null || d2 < best.d2) best = { segIndex, x: cp.x, y: cp.y, d2 };
-        }
+      const speed = 120; // px/s (constant, for readability)
+      const h = Math.sin(p.seed * 78.233 + 0.123) * 43758.5453;
+      const h01 = h - Math.floor(h);
+      const sPath = (tRef.current * speed + h01 * L) % L;
 
-        if (best && best.d2 < 14 * 14) {
-          const s = swirlerFinSegments[best.segIndex];
-          const vx = s.x1 - s.x0;
-          const vy = s.y1 - s.y0;
-          const v = Math.max(1e-6, Math.hypot(vx, vy));
-          const tx = vx / v;
-          const ty = vy / v;
-          x = best.x;
-          y = best.y;
-          swirlerContactRef.current.set(p, {
-            segIndex: best.segIndex,
-            zContact: p.z,
-            xContact: x,
-            yContact: y,
-            tx,
-            ty,
-          });
-        }
+      let x = xBase;
+      let y = yBottom;
+      if (sPath < L1) {
+        // rising plume: straight up
+        y = yBottom - sPath;
+      } else {
+        // after fins: keep fin-set angle
+        const u = sPath - L1;
+        x = xBase + tx * u;
+        y = yHit + ty * u;
       }
+
+      x = clamp(x, 16, viewW - 16);
+      y = clamp(y, 52, viewH - 10);
+
+      const inCore = y <= yHit + 14;
+      const alpha = inCore ? 0.62 : 0.45;
+      const r = inCore ? 1.9 : 1.6;
       return <circle key={i} cx={x} cy={y} r={r} fill="#6c757d" opacity={alpha} />;
     });
 
@@ -654,7 +656,7 @@ export function FlowTunnelAnimations(props: {
                   cursor: 'pointer',
                 }}
               >
-                {DESIGNS.map((d) => (
+                {SWIRL_DESIGNS.map((d) => (
                   <option key={d.id} value={d.id}>
                     {d.name}
                   </option>
@@ -879,69 +881,50 @@ export function FlowTunnelAnimations(props: {
         })}
       </div>
 
-      <div
-        style={{
-          marginTop: 14,
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))',
-          gap: 14,
-          alignItems: 'start',
-        }}
-      >
-        {windTunnelPanel({
-          title: 'Axial swirler — side cut (close-up)',
-          subtitleRight: 'particle path + forces (qualitative)',
-          children: (
-            <svg
-              width={viewW}
-              height={viewH}
-              viewBox={`0 0 ${viewW} ${viewH}`}
-              style={{
-                border: '1px solid #e9ecef',
-                borderRadius: 12,
-                background: 'linear-gradient(to bottom, #fafbfc 0%, #ffffff 100%)',
-              }}
-            >
-              <defs>
-                <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
-                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#495057" opacity="0.7" />
-                </marker>
-              </defs>
-
+      {designId === 'propeller' ? (
+        <>
+          <div
+            style={{
+              marginTop: 14,
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))',
+              gap: 14,
+              alignItems: 'start',
+            }}
+          >
+            {windTunnelPanel({
+              title: 'Axial swirler — side cut (close-up)',
+              subtitleRight: ' ',
+              children: (
+                <svg
+                  width={viewW}
+                  height={viewH}
+                  viewBox={`0 0 ${viewW} ${viewH}`}
+                  style={{
+                    border: '1px solid #e9ecef',
+                    borderRadius: 12,
+                    background: 'linear-gradient(to bottom, #fafbfc 0%, #ffffff 100%)',
+                  }}
+                >
               {/* Zoom window */}
               <rect x={12} y={40} width={viewW - 24} height={viewH - 60} rx={12} fill="#ffffff" stroke="#e9ecef" />
 
+              {/* Incoming flume: constant-width band under the fins */}
+              {(() => {
+                const left = swirlerFinSegments[0].x0;
+                const right = swirlerFinSegments[2].x1;
+                const yTop = viewH - 46;
+                const yBot = viewH - 10;
+                return <rect x={left} y={yTop} width={right - left} height={yBot - yTop} rx={10} fill="#adb5bd" opacity={0.14} />;
+              })()}
+
               {/* A few fins (side cut): tilted plates the flow rides over */}
-              {[0, 1, 2].map((i) => {
-                const x0 = viewW / 2 - 70 + i * 70;
-                const y0 = 140;
-                const x1 = x0 + 46;
-                const y1 = y0 + 70;
-                return (
-                  <g key={i}>
-                    <path d={`M ${x0} ${y0} L ${x1} ${y1}`} stroke="#bdbdbd" strokeWidth={10} opacity={0.55} strokeLinecap="round" />
-                    <path d={`M ${x0} ${y0} L ${x1} ${y1}`} stroke="#000" strokeWidth={2} opacity={0.35} strokeLinecap="round" />
-                  </g>
-                );
-              })}
-
-              {/* Force vectors (qualitative) */}
-              <g opacity={0.9}>
-                <path d={`M ${viewW / 2} 98 L ${viewW / 2} 132`} stroke="#495057" strokeWidth={2.2} markerEnd="url(#arrow)" />
-                <text x={viewW / 2 + 8} y={110} fontSize={11} fill="#495057">
-                  axial push
-                </text>
-
-                <path d={`M ${viewW / 2 - 8} 178 L ${viewW / 2 + 48} 158`} stroke="#495057" strokeWidth={2.2} markerEnd="url(#arrow)" />
-                <text x={viewW / 2 + 54} y={164} fontSize={11} fill="#495057">
-                  turning → swirl
-                </text>
-
-                <path d={`M ${viewW / 2 + 30} 208 L ${viewW / 2 + 2} 236`} stroke="#495057" strokeWidth={2.2} markerEnd="url(#arrow)" opacity={0.65} />
-                <text x={viewW / 2 + 34} y={238} fontSize={11} fill="#495057" opacity={0.85}>
-                  drag/loss
-                </text>
-              </g>
+              {swirlerFinSegments.map((s, i) => (
+                <g key={i}>
+                  <path d={`M ${s.x0} ${s.y0} L ${s.x1} ${s.y1}`} stroke="#bdbdbd" strokeWidth={10} opacity={0.55} strokeLinecap="round" />
+                  <path d={`M ${s.x0} ${s.y0} L ${s.x1} ${s.y1}`} stroke="#000" strokeWidth={2} opacity={0.35} strokeLinecap="round" />
+                </g>
+              ))}
 
               {/* Particles through the close-up region */}
               {swirlerSideDots}
@@ -949,24 +932,24 @@ export function FlowTunnelAnimations(props: {
               <text x={16} y={24} fontSize={11} fill="#495057">
                 Particles ride over pitched fins; the fin reaction force adds tangential momentum (swirl).
               </text>
-            </svg>
-          ),
-        })}
+                </svg>
+              ),
+            })}
 
-        {windTunnelPanel({
-          title: 'Axial swirler — top view (close-up)',
-          subtitleRight: '3 fins; induced tangential motion',
-          children: (
-            <svg
-              width={w}
-              height={h}
-              viewBox={`0 0 ${w} ${h}`}
-              style={{
-                border: '1px solid #e9ecef',
-                borderRadius: 12,
-                background: 'linear-gradient(to bottom, #fafbfc 0%, #ffffff 100%)',
-              }}
-            >
+            {windTunnelPanel({
+              title: 'Axial swirler — top view (close-up)',
+              subtitleRight: '3 fins; induced tangential motion',
+              children: (
+                <svg
+                  width={w}
+                  height={h}
+                  viewBox={`0 0 ${w} ${h}`}
+                  style={{
+                    border: '1px solid #e9ecef',
+                    borderRadius: 12,
+                    background: 'linear-gradient(to bottom, #fafbfc 0%, #ffffff 100%)',
+                  }}
+                >
               <defs>
                 <marker id="arrowTop" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
                   <path d="M 0 0 L 10 5 L 0 10 z" fill="#495057" opacity="0.7" />
@@ -1033,34 +1016,207 @@ export function FlowTunnelAnimations(props: {
               <text x={16} y={24} fontSize={11} fill="#495057">
                 If the fins are straight (no pitch), they won’t add swirl — the pitch is what creates tangential momentum.
               </text>
-            </svg>
-          ),
-        })}
-      </div>
+                </svg>
+              ),
+            })}
+          </div>
 
-      <div
-        style={{
-          marginTop: 14,
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))',
-          gap: 14,
-          alignItems: 'start',
-        }}
-      >
-        {windTunnelPanel({
-          title: 'Axial swirler — isometric (close-up)',
-          subtitleRight: 'same fins; projected in 3D',
-          children: (
-            <svg
-              width={w}
-              height={h}
-              viewBox={`0 0 ${w} ${h}`}
-              style={{
-                border: '1px solid #e9ecef',
-                borderRadius: 12,
-                background: 'linear-gradient(to bottom, #fafbfc 0%, #ffffff 100%)',
-              }}
-            >
+          <div
+            style={{
+              marginTop: 14,
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))',
+              gap: 14,
+              alignItems: 'start',
+            }}
+          >
+            {windTunnelPanel({
+              title: 'Single fin — side (dimensioned)',
+              subtitleRight: 'pitch, height, chord (qualitative)',
+              children: (
+                <svg
+                  width={w}
+                  height={h}
+                  viewBox={`0 0 ${w} ${h}`}
+                  style={{
+                    border: '1px solid #e9ecef',
+                    borderRadius: 12,
+                    background: 'linear-gradient(to bottom, #fafbfc 0%, #ffffff 100%)',
+                  }}
+                >
+                  <defs>
+                    <marker id="arrowDim" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+                      <path d="M 0 0 L 10 5 L 0 10 z" fill="#495057" opacity="0.65" />
+                    </marker>
+                  </defs>
+
+                  <rect x={12} y={40} width={w - 24} height={h - 60} rx={12} fill="#ffffff" stroke="#e9ecef" />
+
+                  {(() => {
+                    const p0 = { x: w * 0.36, y: h * 0.72 };
+                    const finLen = 140;
+                    const aH = ((90 - SWIRLER_FIN_ANGLE_FROM_AXIAL_DEG) * Math.PI) / 180;
+                    const dx = finLen * Math.cos(aH);
+                    const dy = finLen * Math.sin(aH);
+                    const p1 = { x: p0.x + dx, y: p0.y - dy };
+                    const angleFromVerticalDeg = SWIRLER_FIN_ANGLE_FROM_AXIAL_DEG;
+
+                    const dimX = w * 0.74;
+                    const y0 = p0.y;
+                    const y1 = p1.y;
+
+                    return (
+                      <>
+                        <path d={`M ${p0.x} ${p0.y} L ${p1.x} ${p1.y}`} stroke="#bdbdbd" strokeWidth={12} opacity={0.58} strokeLinecap="round" />
+                        <path d={`M ${p0.x} ${p0.y} L ${p1.x} ${p1.y}`} stroke="#000" strokeWidth={2} opacity={0.35} strokeLinecap="round" />
+
+                        {/* Flow direction */}
+                        <path d={`M ${w * 0.16} ${h * 0.78} L ${w * 0.26} ${h * 0.62}`} stroke="#495057" strokeWidth={2} opacity={0.55} markerEnd="url(#arrowDim)" />
+                        <text x={w * 0.14} y={h * 0.82} fontSize={11} fill="#495057" opacity={0.85}>
+                          flow
+                        </text>
+
+                        {/* Height dimension */}
+                        <path d={`M ${dimX} ${y0} L ${dimX} ${y1}`} stroke="#495057" strokeWidth={1.8} opacity={0.55} markerEnd="url(#arrowDim)" />
+                        <path d={`M ${dimX} ${y1} L ${dimX} ${y0}`} stroke="#495057" strokeWidth={1.8} opacity={0.55} markerEnd="url(#arrowDim)" />
+                        <path d={`M ${dimX - 10} ${y0} L ${dimX + 10} ${y0}`} stroke="#495057" strokeWidth={1.8} opacity={0.55} />
+                        <path d={`M ${dimX - 10} ${y1} L ${dimX + 10} ${y1}`} stroke="#495057" strokeWidth={1.8} opacity={0.55} />
+                        <text x={dimX + 14} y={(y0 + y1) / 2} fontSize={11} fill="#495057" opacity={0.9} dominantBaseline="middle">
+                          fin height
+                        </text>
+
+                        {/* Pitch label */}
+                        <text x={w * 0.38} y={h * 0.36} fontSize={11} fill="#495057" opacity={0.9}>
+                          fin angle ≈ {angleFromVerticalDeg.toFixed(0)}° from vertical (visual)
+                        </text>
+
+                        {/* Chord hint */}
+                        <path
+                          d={`M ${p0.x} ${p0.y} L ${p0.x + dx * 0.55} ${p0.y - (p0.y - p1.y) * 0.55}`}
+                          stroke="#495057"
+                          strokeWidth={1.8}
+                          opacity={0.35}
+                          strokeDasharray="4 6"
+                        />
+                        <text x={p0.x + dx * 0.30} y={p0.y - (p0.y - p1.y) * 0.30 - 8} fontSize={11} fill="#495057" opacity={0.75}>
+                          chord
+                        </text>
+                      </>
+                    );
+                  })()}
+
+                  <text x={16} y={24} fontSize={11} fill="#495057">
+                    One vane is just a pitched plate; the plume “sees” it as a ramp that adds tangential momentum.
+                  </text>
+                </svg>
+              ),
+            })}
+
+            {windTunnelPanel({
+              title: 'Single fin — top (dimensioned)',
+              subtitleRight: 'planform + pitch direction',
+              children: (
+                <svg
+                  width={w}
+                  height={h}
+                  viewBox={`0 0 ${w} ${h}`}
+                  style={{
+                    border: '1px solid #e9ecef',
+                    borderRadius: 12,
+                    background: 'linear-gradient(to bottom, #fafbfc 0%, #ffffff 100%)',
+                  }}
+                >
+                  <defs>
+                    <marker id="arrowDimTop" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+                      <path d="M 0 0 L 10 5 L 0 10 z" fill="#495057" opacity="0.65" />
+                    </marker>
+                  </defs>
+
+                  <circle cx={tc.x} cy={tc.y} r={swirlerTopOuterR} fill="#151515" opacity={0.03} stroke="#000" strokeWidth={1.6} />
+
+                  {(() => {
+                    const r1 = swirlerTopOuterR * 0.22;
+                    const r2 = swirlerTopOuterR * 0.92;
+                    const a = -0.45;
+                    const pitch = 0.62;
+                    const chord = 0.22;
+
+                    const a0 = a + pitch - chord * 0.5;
+                    const a1 = a + pitch + chord * 0.5;
+
+                    const pInner = { x: tc.x + r1 * Math.cos(a + pitch), y: tc.y + r1 * Math.sin(a + pitch) };
+                    const pOuter = { x: tc.x + r2 * Math.cos(a + pitch), y: tc.y + r2 * Math.sin(a + pitch) };
+
+                    return (
+                      <>
+                        {drawVanePlate({
+                          cx: tc.x,
+                          cy: tc.y,
+                          rInner: r1,
+                          rOuter: r2,
+                          a0,
+                          a1,
+                          fill: '#bdbdbd',
+                          fillOpacity: 0.52,
+                          stroke: '#000',
+                          strokeOpacity: 0.32,
+                          strokeWidth: 1.4,
+                        })}
+
+                        {/* Radius guides */}
+                        <path d={`M ${tc.x} ${tc.y} L ${pInner.x} ${pInner.y}`} stroke="#495057" strokeWidth={1.8} opacity={0.35} strokeDasharray="4 6" />
+                        <path d={`M ${tc.x} ${tc.y} L ${pOuter.x} ${pOuter.y}`} stroke="#495057" strokeWidth={1.8} opacity={0.35} strokeDasharray="4 6" />
+                        <text x={tc.x + 10} y={tc.y + 14} fontSize={11} fill="#495057" opacity={0.85}>
+                          hub
+                        </text>
+
+                        {/* Pitch direction arrow */}
+                        <path
+                          d={`M ${tc.x + swirlerTopOuterR * 0.08} ${tc.y - swirlerTopOuterR * 0.62} A ${swirlerTopOuterR * 0.62} ${swirlerTopOuterR * 0.62} 0 0 1 ${tc.x + swirlerTopOuterR * 0.62} ${tc.y - swirlerTopOuterR * 0.08}`}
+                          fill="none"
+                          stroke="#495057"
+                          strokeWidth={2}
+                          opacity={0.55}
+                          markerEnd="url(#arrowDimTop)"
+                        />
+                        <text x={tc.x + swirlerTopOuterR * 0.26} y={tc.y - swirlerTopOuterR * 0.72} fontSize={11} fill="#495057" opacity={0.85}>
+                          pitch → swirl
+                        </text>
+
+                        <text x={16} y={24} fontSize={11} fill="#495057">
+                          In plan view, pitch is an angular offset of the vane’s “chord” from the radial direction.
+                        </text>
+                      </>
+                    );
+                  })()}
+                </svg>
+              ),
+            })}
+          </div>
+
+          <div
+            style={{
+              marginTop: 14,
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))',
+              gap: 14,
+              alignItems: 'start',
+            }}
+          >
+            {windTunnelPanel({
+              title: 'Axial swirler — isometric (close-up)',
+              subtitleRight: 'same fins; projected in 3D',
+              children: (
+                <svg
+                  width={w}
+                  height={h}
+                  viewBox={`0 0 ${w} ${h}`}
+                  style={{
+                    border: '1px solid #e9ecef',
+                    borderRadius: 12,
+                    background: 'linear-gradient(to bottom, #fafbfc 0%, #ffffff 100%)',
+                  }}
+                >
               <defs>
                 <marker id="arrowIso" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
                   <path d="M 0 0 L 10 5 L 0 10 z" fill="#495057" opacity="0.7" />
@@ -1190,29 +1346,25 @@ export function FlowTunnelAnimations(props: {
               <text x={16} y={24} fontSize={11} fill="#495057">
                 Same pitched vanes; this just projects radius + height into one view.
               </text>
-            </svg>
-          ),
-        })}
+                </svg>
+              ),
+            })}
 
-        {windTunnelPanel({
-          title: 'Axial swirler — bottom view (close-up)',
-          subtitleRight: 'looking up into the vanes',
-          children: (
-            <svg
-              width={w}
-              height={h}
-              viewBox={`0 0 ${w} ${h}`}
-              style={{
-                border: '1px solid #e9ecef',
-                borderRadius: 12,
-                background: 'linear-gradient(to bottom, #fafbfc 0%, #ffffff 100%)',
-              }}
-            >
-              <defs>
-                <marker id="arrowBot" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
-                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#495057" opacity="0.7" />
-                </marker>
-              </defs>
+            {windTunnelPanel({
+              title: 'Axial swirler — bottom view (close-up)',
+              subtitleRight: 'looking up into the vanes',
+              children: (
+                <svg
+                  width={w}
+                  height={h}
+                  viewBox={`0 0 ${w} ${h}`}
+                  style={{
+                    border: '1px solid #e9ecef',
+                    borderRadius: 12,
+                    background: 'linear-gradient(to bottom, #fafbfc 0%, #ffffff 100%)',
+                  }}
+                >
+              <defs />
 
               <circle cx={tc.x} cy={tc.y} r={swirlerTopOuterR} fill="#151515" opacity={0.03} stroke="#000" strokeWidth={1.6} />
               <circle cx={tc.x} cy={tc.y} r={topOuterR * 0.12} fill="#2f2f2f" opacity={0.55} stroke="#000" strokeWidth={1.6} />
@@ -1242,17 +1394,7 @@ export function FlowTunnelAnimations(props: {
                 );
               })}
 
-              <path
-                d={`M ${tc.x - swirlerTopOuterR * 0.2} ${tc.y + swirlerTopOuterR * 0.72} A ${swirlerTopOuterR * 0.72} ${swirlerTopOuterR * 0.72} 0 0 0 ${tc.x - swirlerTopOuterR * 0.72} ${tc.y + swirlerTopOuterR * 0.2}`}
-                fill="none"
-                stroke="#495057"
-                strokeWidth={2}
-                opacity={0.55}
-                markerEnd="url(#arrowBot)"
-              />
-              <text x={tc.x - swirlerTopOuterR * 0.68} y={tc.y + swirlerTopOuterR * 0.84} fontSize={11} fill="#495057" opacity={0.85}>
-                swirl
-              </text>
+
 
               {/* reuse the same particle slice as top view */}
               {swirlerTopDots}
@@ -1260,10 +1402,12 @@ export function FlowTunnelAnimations(props: {
               <text x={16} y={24} fontSize={11} fill="#495057">
                 Bottom view is the same vanes, mirrored as if you’re looking up into the emitter.
               </text>
-            </svg>
-          ),
-        })}
-      </div>
+                </svg>
+              ),
+            })}
+          </div>
+        </>
+      ) : null}
 
       <div style={{ marginTop: 14, background: '#f8f9fa', border: '1px solid #e9ecef', borderRadius: 12, padding: 14 }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
@@ -1281,9 +1425,6 @@ export function FlowTunnelAnimations(props: {
               </div>
               <div style={{ marginTop: 6, fontSize: 12, color: '#6c757d' }}>
                 Restriction (outlet-only): ×{restrictionIndexOutletOnly.toFixed(2)}; backpressure risk: <strong>{backpressureFlag}</strong>
-              </div>
-              <div style={{ fontSize: 12, color: '#6c757d' }}>
-                With side ports: ×{restrictionIndexWithPorts.toFixed(2)} (assumes {sidePortCount}×{sidePortDiaIn}\")
               </div>
             </div>
 

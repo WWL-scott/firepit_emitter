@@ -10,8 +10,7 @@ import { VisualView } from './components/VisualView';
 import { StackAnalysisChart } from './components/StackAnalysisChart';
 import { OutletDiameterComparison } from './components/OutletDiameterComparison';
 import { ReferenceArchive } from './components/ReferenceArchive';
-import { EmitterRenderings } from './components/EmitterRenderings';
-import { FlowTunnelAnimations } from './components/FlowTunnelAnimations';
+import { FlowTunnelAnimations, SWIRL_DESIGNS, type SwirlDesignId } from './components/FlowTunnelAnimations';
 
 type PresetKey = 'smooth' | 'ramp' | 'statorRamp' | 'custom';
 type ViewMode = 'main' | 'visual' | 'analysis' | 'docs';
@@ -26,6 +25,7 @@ export function App() {
   const [preset, setPreset] = useState<PresetKey>('statorRamp');
   const [cfg, setCfg] = useState<Config>(() => presetStatorRamp());
   const [viewMode, setViewMode] = useState<ViewMode>('main');
+  const [dashboardDesignId, setDashboardDesignId] = useState<SwirlDesignId>('propeller');
 
   function applyPreset(p: PresetKey) {
     setPreset(p);
@@ -33,13 +33,63 @@ export function App() {
     setCfg(presets[p]());
   }
 
-  const results = useMemo(() => calcResults(cfg), [cfg]);
+  const baseResults = useMemo(() => calcResults(cfg), [cfg]);
+
+  const dashboardDesign = useMemo(
+    () => SWIRL_DESIGNS.find((d) => d.id === dashboardDesignId) ?? SWIRL_DESIGNS[0],
+    [dashboardDesignId]
+  );
+
+  const dashboardConfigKey = useMemo(() => `${preset}|${dashboardDesignId}` as const, [preset, dashboardDesignId]);
+
+  const dashboardConfigOptions = useMemo(() => {
+    const presetOptions: Array<{ key: PresetKey; label: string }> = [
+      { key: 'smooth', label: 'Smooth wall' },
+      { key: 'ramp', label: 'Ramp only' },
+      { key: 'statorRamp', label: 'Stator + ramp' },
+      { key: 'custom', label: 'Custom inputs' },
+    ];
+
+    const options: Array<{ value: string; label: string }> = [];
+    for (const p of presetOptions) {
+      for (const d of SWIRL_DESIGNS) {
+        options.push({
+          value: `${p.key}|${d.id}`,
+          label: `${p.label} — ${d.name}`,
+        });
+      }
+    }
+    return options;
+  }, []);
+
+  const dashboardModelCfg = useMemo<Config>(() => {
+    // Apply the same design multipliers used in the Visual flow panel,
+    // but only for Main Dashboard outputs (do not mutate the input config itself).
+    return {
+      ...cfg,
+      scenario: 'custom',
+      UA_W_per_K: cfg.UA_W_per_K * dashboardDesign.uaMult,
+      C_effective_W_per_K: cfg.C_effective_W_per_K * dashboardDesign.cMult,
+    };
+  }, [cfg, dashboardDesign.uaMult, dashboardDesign.cMult]);
+
+  const dashboardResults = useMemo(() => calcResults(dashboardModelCfg), [dashboardModelCfg]);
 
   const distances = cfg.distancesFromSurfaceFt;
-  const series = [
-    { name: 'Absorbed IR (standing, W)', x: distances, y: results.absorbedStandingW },
-    { name: 'Absorbed IR (seated, W)', x: distances, y: results.absorbedSeatedW },
+  const baseSeries = [
+    { name: 'Absorbed IR (standing, W)', x: distances, y: baseResults.absorbedStandingW },
+    { name: 'Absorbed IR (seated, W)', x: distances, y: baseResults.absorbedSeatedW },
   ];
+
+  const dashboardSeries = [
+    { name: 'Absorbed IR (standing, W)', x: distances, y: dashboardResults.absorbedStandingW },
+    { name: 'Absorbed IR (seated, W)', x: distances, y: dashboardResults.absorbedSeatedW },
+  ];
+
+  const results = viewMode === 'main' ? dashboardResults : baseResults;
+  const series = viewMode === 'main' ? dashboardSeries : baseSeries;
+  const epsUA = viewMode === 'main' ? dashboardModelCfg.UA_W_per_K : cfg.UA_W_per_K;
+  const epsC = viewMode === 'main' ? dashboardModelCfg.C_effective_W_per_K : cfg.C_effective_W_per_K;
 
   return (
     <div style={{ 
@@ -147,23 +197,26 @@ export function App() {
             }}>⚙️ Input Parameters</h3>
 
             <SelectField
-              label="Preset Configuration"
-              value={preset}
-              options={[
-                { value: 'smooth', label: 'Smooth wall' },
-                { value: 'ramp', label: 'Ramp only' },
-                { value: 'statorRamp', label: 'Stator + ramp' },
-                { value: 'custom', label: 'Custom (edit freely)' },
-              ]}
-              onChange={(v) => applyPreset(v as PresetKey)}
+              label="Emitter Configuration"
+              value={dashboardConfigKey}
+              options={dashboardConfigOptions}
+              onChange={(v) => {
+                const [p, d] = String(v).split('|') as [PresetKey, SwirlDesignId];
+                if (p === 'custom') {
+                  setPreset('custom');
+                } else {
+                  applyPreset(p);
+                }
+                setDashboardDesignId(d);
+              }}
             >
               <Tooltip
-                title="Preset Configuration"
-                description="Pre-configured scenarios with different wall geometries and heat transfer characteristics. Each preset has optimized UA values based on expected swirl and surface enhancement."
+                title="Emitter Configuration"
+                description="Combines the baseline geometry preset (smooth/ramp/stator+ramp/custom) with the flow hardware design (swirl concept). On the Main Dashboard, the selected design applies the same UA/C multipliers used on the Visual page."
                 relationships={[
-                  'Smooth: Minimal turbulence, lowest UA (~12 W/K)',
-                  'Ramp: Tapered walls create moderate swirl, medium UA (~20 W/K)',
-                  'Stator+Ramp: Maximum turbulence from stator blades, highest UA (~28 W/K)'
+                  'Preset controls the baseline geometry + base UA/C assumptions',
+                  'Design controls the swirl multipliers (UA/C) for comparison',
+                  'Default design is axial swirler (propeller-style blades)'
                 ]}
               />
             </SelectField>
@@ -461,7 +514,7 @@ export function App() {
               <Kpi label="Burner Power" value={`${(results.burnerPowerW / 1000).toFixed(2)} kW`} />
               <Kpi label="Wall Captured" value={`${(results.wallCapturedW / 1000).toFixed(2)} kW`} />
               <Kpi label="IR Out (effective)" value={`${(results.radiantOutW / 1000).toFixed(2)} kW`} />
-              <Kpi label="Heat Transfer (ε)" value={`${(1 - Math.exp(-cfg.UA_W_per_K / cfg.C_effective_W_per_K)).toFixed(3)}`} />
+              <Kpi label="Heat Transfer (ε)" value={`${(1 - Math.exp(-epsUA / epsC)).toFixed(3)}`} />
               <Kpi label="Capture Efficiency" value={`${((results.wallCapturedW / results.burnerPowerW) * 100).toFixed(1)}%`} />
               <Kpi label="IR Efficiency" value={`${((results.radiantOutW / results.burnerPowerW) * 100).toFixed(1)}%`} />
             </div>
@@ -503,10 +556,6 @@ export function App() {
 
           <div style={{ marginTop: 20 }}>
             <FlowTunnelAnimations config={cfg} />
-          </div>
-
-          <div style={{ marginTop: 20 }}>
-            <EmitterRenderings />
           </div>
           
           <div style={{ 
